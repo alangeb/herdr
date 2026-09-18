@@ -1,0 +1,80 @@
+id = "taurlm"
+version = "2025.07.10.1"
+min_engine_version = 1
+updated_at = "2025-07-10T00:00:00Z"
+aliases = ["taurlm", "tau-rlm"]
+
+# TauRLM agent detection. TauRLM runs inside a tmux pane and communicates
+# through the REPL protocol. Screen patterns match its REPL feedback chrome,
+# code fence markers, and metadata prefixes.
+
+[[rules]]
+id = "osc_progress_blocked"
+state = "blocked"
+priority = 1400
+region = "osc_progress"
+visible_blocker = true
+regex = ['^4;3(?:;|$)']
+
+[[rules]]
+id = "osc_title_blocked"
+state = "blocked"
+priority = 1300
+region = "osc_title"
+visible_blocker = true
+regex = ['(?i)\b(needs\s+(input|confirmation|approval)|blocked|awaiting)\b']
+
+[[rules]]
+id = "blocked_repl_prompt"
+state = "blocked"
+priority = 1100
+region = "bottom_non_empty_lines(15)"
+visible_blocker = true
+regex = ['(?i)\b(answer\[.ready.\]\s*=\s*True|confirm|awaiting\s+(user|human)|input\s+required)\b']
+not = [
+  { line_regex = ['(?i)\b(working|running|executing|processing|detecting)\b'] },
+]
+
+[[rules]]
+id = "working_executing"
+state = "working"
+priority = 900
+region = "bottom_non_empty_lines(12)"
+visible_working = true
+regex = ['(?i)\b(running|executing|processing|evaluating|computing|compiling|building)\b.*\.{2,}']
+
+[[rules]]
+id = "working_repl_output"
+state = "working"
+priority = 850
+region = "bottom_non_empty_lines(10)"
+visible_working = true
+line_regex = [
+  '^(?:Running|Executing|Evaluating|Processing)\b.*$',
+]
+
+[[rules]]
+id = "idle_answer_delivered"
+state = "idle"
+priority = 100
+region = "bottom_non_empty_lines(8)"
+visible_idle = true
+line_regex = ['(?i)^(?:answer\[.content.\]|answer\[.ready.\]\s*=\s*True|Done|Complete|Answer:)']
+not = [
+  { line_regex = ['(?i)\b(working|running|executing|processing)\b'] },
+]
+
+[[rules]]
+id = "idle_prompt_ready"
+state = "idle"
+priority = 80
+region = "bottom_non_empty_lines(4)"
+visible_idle = true
+line_regex = ['(?i)^\s*(?:\$|rlm\[.*\]>>+|>{2,})\s*$']
+
+[[rules]]
+id = "no_live_state_evidence"
+state = "unknown"
+priority = 0
+region = "whole_recent"
+regex = ['(?s)^.*$']

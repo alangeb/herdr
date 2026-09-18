@@ -65,10 +65,12 @@ pub enum Agent {
     Letta,
     Maki,
     Muse,
+    Tau,
+    TauRlm,
 }
 
 impl Agent {
-    pub const ALL: [Self; 24] = [
+    pub const ALL: [Self; 26] = [
         Self::Pi,
         Self::Claude,
         Self::Codex,
@@ -93,9 +95,11 @@ impl Agent {
         Self::Letta,
         Self::Maki,
         Self::Muse,
+        Self::Tau,
+        Self::TauRlm,
     ];
 
-    pub const SCREEN_MANIFEST_AGENTS: [Self; 22] = [
+    pub const SCREEN_MANIFEST_AGENTS: [Self; 24] = [
         Self::Pi,
         Self::Claude,
         Self::Codex,
@@ -118,6 +122,8 @@ impl Agent {
         Self::Letta,
         Self::Maki,
         Self::Muse,
+        Self::Tau,
+        Self::TauRlm,
     ];
 }
 
@@ -147,6 +153,8 @@ pub fn agent_label(agent: Agent) -> &'static str {
         Agent::Letta => "letta",
         Agent::Maki => "maki",
         Agent::Muse => "muse",
+        Agent::Tau => "tau",
+        Agent::TauRlm => "taurlm",
     }
 }
 
@@ -182,6 +190,8 @@ pub fn interactive_agent_executable(agent: Agent) -> &'static str {
         Agent::Letta => "letta",
         Agent::Maki => "maki",
         Agent::Muse => "muse",
+        Agent::Tau => "tau",
+        Agent::TauRlm => "taurlm",
     }
 }
 
@@ -223,6 +233,8 @@ fn lookup_agent(name: &str) -> Option<Agent> {
         "maki" => Some(Agent::Maki),
         "muse" | "muse-code" | "muse-cli" => Some(Agent::Muse),
         _ if is_muse_versioned_binary(name) => Some(Agent::Muse),
+        "tau" | "tauergon" | "tau-ergon" => Some(Agent::Tau),
+        "taurlm" | "tau-rlm" => Some(Agent::TauRlm),
         _ => None,
     }
 }
@@ -333,6 +345,8 @@ pub(crate) fn full_lifecycle_hook_authority(source: &str, agent_label: &str) -> 
             | ("herdr:opencode", "opencode")
             | ("herdr:kilo", "kilo")
             | ("herdr:kimi", "kimi")
+            | ("herdr:tau", "tau")
+            | ("herdr:taurlm", "taurlm")
     )
 }
 
@@ -1027,6 +1041,8 @@ mod tests {
             (Agent::Letta, "letta"),
             (Agent::Maki, "maki"),
             (Agent::Muse, "muse"),
+            (Agent::Tau, "tau"),
+            (Agent::TauRlm, "taurlm"),
         ];
         assert_eq!(expected.len(), Agent::ALL.len());
         for (agent, executable) in expected {
@@ -1063,6 +1079,43 @@ mod tests {
             assert!(session_identity_only_integration(source, label));
             assert!(Agent::SCREEN_MANIFEST_AGENTS.contains(&agent));
         }
+    }
+
+    #[test]
+    fn tau_manifest_detects_working_blocked_and_idle_chrome() {
+        assert_eq!(
+            detect_state(Some(Agent::Tau), "Running integration checks"),
+            AgentState::Working
+        );
+        assert_eq!(
+            detect_state(Some(Agent::Tau), "Awaiting user input before continuing"),
+            AgentState::Blocked
+        );
+        assert_eq!(
+            detect_state(Some(Agent::Tau), "answer delivered\n>>>"),
+            AgentState::Idle
+        );
+        assert_eq!(manifest::explain(Agent::Tau, "").state, AgentState::Unknown);
+    }
+
+    #[test]
+    fn taurlm_manifest_detects_working_blocked_and_idle_chrome() {
+        assert_eq!(
+            detect_state(Some(Agent::TauRlm), "Running integration checks..."),
+            AgentState::Working
+        );
+        assert_eq!(
+            detect_state(Some(Agent::TauRlm), "input required: choose a tool"),
+            AgentState::Blocked
+        );
+        assert_eq!(
+            detect_state(Some(Agent::TauRlm), "rlm[1]>>>"),
+            AgentState::Idle
+        );
+        assert_eq!(
+            manifest::explain(Agent::TauRlm, "").state,
+            AgentState::Unknown
+        );
     }
 
     #[test]
