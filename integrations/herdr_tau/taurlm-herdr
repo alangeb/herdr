@@ -1,0 +1,6 @@
+#!/bin/sh
+# HERDR_INTEGRATION_ID=taurlm
+# HERDR_INTEGRATION_VERSION=1
+d="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+[ -f "$d/taurlm_entry.py" ] || d="$HOME/.herdr/tau"
+exec /usr/bin/python3 "$d/taurlm_entry.py" "$@"

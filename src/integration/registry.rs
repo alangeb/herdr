@@ -515,6 +515,36 @@ pub(crate) fn experimental_letta_integration_status() -> Option<super::Experimen
     })
 }
 
+pub(crate) fn experimental_tau_integration_status() -> Option<super::ExperimentalIntegrationStatus>
+{
+    let data_dir = super::targets::tau_wrapper_dir().ok()?;
+    let path = data_dir.join("tau-herdr");
+    let (state, installed_version) = integration_state_for_path(&path, TAU_INTEGRATION_VERSION);
+    Some(super::ExperimentalIntegrationStatus {
+        label: "tau",
+        path,
+        state,
+        installed_version,
+        expected_version: TAU_INTEGRATION_VERSION,
+    })
+}
+
+pub(crate) fn experimental_taurlm_integration_status(
+) -> Option<super::ExperimentalIntegrationStatus> {
+    let data_dir = super::targets::tau_wrapper_dir().ok()?;
+    let path = data_dir.join("taurlm-herdr");
+    let (state, installed_version) = integration_state_for_path(&path, TAU_INTEGRATION_VERSION);
+    Some(super::ExperimentalIntegrationStatus {
+        label: "taurlm",
+        path,
+        state,
+        installed_version,
+        expected_version: TAU_INTEGRATION_VERSION,
+    })
+}
+
+const TAU_INTEGRATION_VERSION: u32 = 1;
+
 pub(crate) fn parse_integration_version(content: &str) -> Option<u32> {
     content.lines().find_map(|line| {
         let marker_line = line
