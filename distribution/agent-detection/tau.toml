@@ -1,0 +1,66 @@
+id = "tau"
+version = "2025.07.10.1"
+min_engine_version = 1
+updated_at = "2025-07-10T00:00:00Z"
+aliases = ["tau", "tauergon", "tau-ergon"]
+
+# Tau agent detection via REPL feedback chrome and EOT answer patterns.
+# Tau presents answers after setting answer['ready']=True and shows a
+# prompt between turns. Working state is indicated by active code execution.
+
+[[rules]]
+id = "blocked_confirmation"
+state = "blocked"
+priority = 1200
+region = "bottom_non_empty_lines(15)"
+visible_blocker = true
+any = [
+  { contains = ["confirm"] },
+  { contains = ["approve"] },
+  { contains = ["awaiting approval"] },
+  { contains = ["eot confirmation"] },
+]
+
+[[rules]]
+id = "blocked_input_request"
+state = "blocked"
+priority = 1100
+region = "bottom_non_empty_lines(15)"
+visible_blocker = true
+regex = ['(?i)\b(please\s+(provide|confirm|approve|enter|respond)|input\s+required|awaiting\s+user|waiting\s+for\s+(user|input))\b']
+
+[[rules]]
+id = "working_executing"
+state = "working"
+priority = 900
+region = "bottom_non_empty_lines(12)"
+visible_working = true
+line_regex = [
+  '(?i)^\s*(?:Running|Executing|Processing|Evaluating|\.\.\.\s*(?:executing|running|computing))\b.*$',
+]
+
+[[rules]]
+id = "idle_answer_presented"
+state = "idle"
+priority = 100
+region = "bottom_non_empty_lines(8)"
+visible_idle = true
+line_regex = ['(?i)^\s*(?:Done|Complete|Answer:|Result:)\s*$']
+not = [
+  { line_regex = ['(?i)\b(working|running|executing|processing)\b'] },
+]
+
+[[rules]]
+id = "idle_shell_prompt"
+state = "idle"
+priority = 80
+region = "bottom_non_empty_lines(4)"
+visible_idle = true
+line_regex = ['^\s*(?:\$|>{2,})\s*$']
+
+[[rules]]
+id = "no_live_state_evidence"
+state = "unknown"
+priority = 0
+region = "whole_recent"
+regex = ['(?s)^.*$']

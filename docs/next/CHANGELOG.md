@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Added
+- Tau and TauRLM panes are detected and lifecycle-authoritative through experimental `herdr integration install tau` / `herdr integration install taurlm` wrappers.
+
 ## [0.9.1] - 2026-09-16
 
 ### Added

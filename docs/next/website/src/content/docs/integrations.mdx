@@ -1,6 +1,6 @@
 ---
 title: Integrations
-description: Install Herdr integrations for Pi, OMP, Claude Code, Codex, GitHub Copilot CLI, Devin CLI, Droid, Kimi Code CLI, OpenCode, Kilo Code CLI, Hermes Agent, Qoder CLI, Qwen Code, Letta Code, Cursor Agent CLI, MastraCode, Antigravity CLI, and Grok CLI.
+description: Install Herdr integrations for Pi, OMP, Claude Code, Codex, GitHub Copilot CLI, Devin CLI, Droid, Kimi Code CLI, OpenCode, Kilo Code CLI, Hermes Agent, Qoder CLI, Qwen Code, Letta Code, Tau, TauRLM, Cursor Agent CLI, MastraCode, Antigravity CLI, and Grok CLI.
 ---
 
 Herdr detects supported agents automatically. Install official integrations when you want native agent session restore, direct lifecycle reports, or both. See [Agents](/docs/agents/) for the full status authority model.
@@ -24,6 +24,8 @@ herdr integration install hermes
 herdr integration install qodercli
 herdr integration install qwen
 herdr integration install letta
+herdr integration install tau
+herdr integration install taurlm
 herdr integration install cursor
 herdr integration install mastracode
 herdr integration install antigravity-cli
@@ -47,6 +49,8 @@ herdr integration uninstall hermes
 herdr integration uninstall qodercli
 herdr integration uninstall qwen
 herdr integration uninstall letta
+herdr integration uninstall tau
+herdr integration uninstall taurlm
 herdr integration uninstall cursor
 herdr integration uninstall mastracode
 herdr integration uninstall antigravity-cli
@@ -61,7 +65,7 @@ Herdr uses integrations in two ways:
 
 | Integration type | Agents | Effect |
 | --- | --- | --- |
-| Lifecycle authority | Pi, OMP, Kimi Code CLI, OpenCode, Kilo Code CLI, MastraCode | When installed and actively reporting for the pane, hook or plugin events author `idle`, `working`, and `blocked`. Herdr does not also use screen manifest fallback for that same lifecycle authority. |
+| Lifecycle authority | Pi, OMP, Kimi Code CLI, OpenCode, Kilo Code CLI, MastraCode, Tau, TauRLM | When installed and actively reporting for the pane, hook or plugin events author `idle`, `working`, and `blocked`. Herdr does not also use screen manifest fallback for that same lifecycle authority. |
 | Session identity | Claude Code, Codex, GitHub Copilot CLI, Devin CLI, Droid, Qoder CLI, Qwen Code, Letta Code, Cursor Agent CLI, Hermes Agent, Antigravity CLI, Grok CLI | The integration reports native session references for restore. State still comes from Herdr's screen manifest detection. |
 
 Custom integrations can also report state that is not visible in the native terminal UI. They do not need to be built into Herdr or use a recognized agent executable.
@@ -302,6 +306,17 @@ The quiet `SessionStart` hook reports the conversation ID for native restore. Le
 Herdr uses `~/.letta`. The config directory must already exist. Install writes `hooks/herdr-agent-session.sh` (`hooks/herdr-agent-session.ps1` on Windows) and adds a Herdr entry to `settings.json`. Uninstall removes only the matching entry and managed script.
 
 Herdr resumes named conversations with `letta --conversation <id>`. It records the default conversation as `default:<agent-id>` and resumes it with `letta --conversation default --agent <agent-id>`.
+
+## Tau and TauRLM
+
+Tau and TauRLM integrations are experimental and CLI-only. Install the lifecycle wrappers:
+
+```bash
+herdr integration install tau
+herdr integration install taurlm
+```
+
+Launch the wrapper instead of the ordinary agent command, for example `tau-herdr` or `taurlm-herdr`. The wrapper detects the agent project from `TAU_ROOT`, `TAURLM_ROOT`, `~/<agent>`, or `../<agent>`, waits for its A2A lifecycle socket, and reports lifecycle state plus session identity through Herdr's socket API.
 
 ## Cursor Agent CLI
 

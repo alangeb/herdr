@@ -22,8 +22,9 @@ use super::config_edit::{
 use super::config_file::{check_config_targets, write_config};
 use super::env::{
     antigravity_cli_dir, claude_dir, codex_dir, copilot_dir, cursor_dir, devin_dir, droid_dir,
-    grok_dir, hermes_dir, hermes_plugin_dir, kilo_dir, kimi_dir, letta_dir, mastracode_dir,
-    omp_extension_dir, opencode_dir, opencode_state_dir, pi_extension_dir, qodercli_dir, qwen_dir,
+    grok_dir, hermes_dir, hermes_plugin_dir, home_dir, kilo_dir, kimi_dir, letta_dir,
+    mastracode_dir, omp_extension_dir, opencode_dir, opencode_state_dir, pi_extension_dir,
+    qodercli_dir, qwen_dir,
 };
 use super::file_ops::{
     make_executable, remove_dir_all_if_exists, remove_file_if_exists, remove_legacy_bash_hook_file,
@@ -1774,4 +1775,123 @@ pub(crate) fn uninstall_grok() -> io::Result<GrokUninstallResult> {
         removed_hook_file,
         removed_config_file,
     })
+}
+
+pub(crate) fn install_tau() -> io::Result<Vec<String>> {
+    install_tau_wrapper("tau")
+}
+
+pub(crate) fn install_taurlm() -> io::Result<Vec<String>> {
+    install_tau_wrapper("taurlm")
+}
+
+pub(crate) fn uninstall_tau() -> io::Result<Vec<String>> {
+    uninstall_tau_wrapper("tau")
+}
+
+pub(crate) fn uninstall_taurlm() -> io::Result<Vec<String>> {
+    uninstall_tau_wrapper("taurlm")
+}
+
+pub(crate) fn tau_wrapper_dir() -> io::Result<PathBuf> {
+    Ok(home_dir()?.join(".herdr").join("tau"))
+}
+
+fn install_tau_wrapper(agent: &str) -> io::Result<Vec<String>> {
+    let bin_dir = home_dir()?.join(".local").join("bin");
+    let data_dir = tau_wrapper_dir()?;
+    fs::create_dir_all(&data_dir)?;
+    fs::create_dir_all(&bin_dir)?;
+
+    let mut messages = Vec::new();
+
+    // Install shared modules (herdr_report.py, herdr_wrapper.py)
+    let report_src = include_str!("../../integrations/herdr_tau/herdr_report.py");
+    let wrapper_src = include_str!("../../integrations/herdr_tau/herdr_wrapper.py");
+    let tau_entry_src = include_str!("../../integrations/herdr_tau/tau_entry.py");
+    let taurlm_entry_src = include_str!("../../integrations/herdr_tau/taurlm_entry.py");
+    for (name, src) in [
+        ("herdr_report.py", report_src),
+        ("herdr_wrapper.py", wrapper_src),
+        ("tau_entry.py", tau_entry_src),
+        ("taurlm_entry.py", taurlm_entry_src),
+    ] {
+        let path = data_dir.join(name);
+        fs::write(&path, src)?;
+        make_executable(&path)?;
+    }
+    messages.push(format!(
+        "installed tau integration modules to {}",
+        data_dir.display()
+    ));
+
+    // Install launch wrapper script
+    let script_name = format!("{}-herdr", agent);
+    let script_src = if agent == "tau" {
+        include_str!("../../integrations/herdr_tau/tau-herdr")
+    } else {
+        include_str!("../../integrations/herdr_tau/taurlm-herdr")
+    };
+    let script_path = data_dir.join(&script_name);
+    fs::write(&script_path, script_src)?;
+    make_executable(&script_path)?;
+    messages.push(format!(
+        "installed {} to {}",
+        script_name,
+        script_path.display()
+    ));
+
+    // Symlink into ~/.local/bin
+    let link_path = bin_dir.join(&script_name);
+    if link_path.exists() || std::fs::symlink_metadata(&link_path).is_ok() {
+        let _ = fs::remove_file(&link_path);
+    }
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&script_path, &link_path)?;
+    #[cfg(not(unix))]
+    fs::copy(&script_path, &link_path)?;
+    messages.push(format!(
+        "symlinked {} into {}",
+        script_name,
+        bin_dir.display()
+    ));
+
+    // Verify detection manifest is bundled
+    messages.push(format!(
+        "detection manifest for '{}' is bundled (no action needed)",
+        agent
+    ));
+
+    Ok(messages)
+}
+
+fn uninstall_tau_wrapper(agent: &str) -> io::Result<Vec<String>> {
+    let mut messages = Vec::new();
+    let script_name = format!("{}-herdr", agent);
+
+    // Remove symlink from ~/.local/bin
+    let link_path = home_dir()?.join(".local").join("bin").join(&script_name);
+    if std::fs::symlink_metadata(&link_path).is_ok() {
+        fs::remove_file(&link_path)?;
+        messages.push(format!("removed {}", link_path.display()));
+    } else {
+        messages.push(format!("no wrapper found at {}", link_path.display()));
+    }
+
+    // Remove data dir contents (only if no other agent still needs them)
+    let data_dir = tau_wrapper_dir()?;
+    if data_dir.is_dir() {
+        let _ = fs::remove_file(data_dir.join(&script_name));
+        // Only remove shared modules if the other agent's script is also gone
+        let tau_script = data_dir.join("tau-herdr");
+        let taurlm_script = data_dir.join("taurlm-herdr");
+        if !tau_script.exists() && !taurlm_script.exists() {
+            let _ = fs::remove_file(data_dir.join("herdr_report.py"));
+            let _ = fs::remove_file(data_dir.join("herdr_wrapper.py"));
+            let _ = fs::remove_dir_all(&data_dir);
+            messages.push(format!("removed {}", data_dir.display()));
+        }
+    }
+
+    Ok(messages)
 }
