@@ -36,18 +36,20 @@ def run_cmd(source, cmd, cwd, agent_label="tau", launch_cwd=None):
     except Exception:
         pass
     agent_session_id = hr.wait_for_agent_session(cwd, timeout_ms=8000, interval_ms=250)
-    if b:
-        session_args = [b, "pane", "report-agent-session", pane,
-                        "--source", hr.source_for(agent_label), "--agent", agent_label]
-        if agent_session_id:
-            session_args += [
-                "--agent-session-id", agent_session_id,
-                "--session-start-source", "startup",
-                "--seq", "0",
-            ]
-        hr.call(session_args)
+
+    def register_session(session_id):
+        if not b or not session_id:
+            return
+        hr.call([b, "pane", "report-agent-session", pane,
+                 "--source", hr.source_for(agent_label), "--agent", agent_label,
+                 "--agent-session-id", session_id,
+                 "--session-start-source", "startup",
+                 "--seq", str(hr.seq(pane))])
+
+    register_session(agent_session_id)
     hr.report("working", "child started", pane, agent=agent_label, agent_session_id=agent_session_id)
     last = ["working"]
+    sess = [agent_session_id or ""]
     stop = threading.Event()
     def monitor():
         nonlocal agent_session_id
@@ -57,8 +59,12 @@ def run_cmd(source, cmd, cwd, agent_label="tau", launch_cwd=None):
             if proc.poll() is not None:
                 break
             state, session_id = hr.tau_status_with_session(cwd)
-            if session_id:
+            if session_id and session_id != sess[0]:
+                # a2a server came up after the startup wait (e.g. slow resume):
+                # adopt and (re-)register so the server accepts our state reports.
+                sess[0] = session_id
                 agent_session_id = session_id
+                register_session(session_id)
             if state and state != last[0]:
                 if hr.report(state, "status monitor", pane, agent=agent_label, agent_session_id=agent_session_id):
                     last[0] = state
@@ -67,6 +73,11 @@ def run_cmd(source, cmd, cwd, agent_label="tau", launch_cwd=None):
     signaled = [None]
     def handler(sig, frame):
         signaled[0] = sig
+        try:
+            hr.report("blocked", f"wrapper signal {sig}", pane, agent=agent_label,
+                      agent_session_id=sess[0] or None)
+        except Exception:
+            pass
         try:
             proc.terminate()
         except Exception:
@@ -78,7 +89,6 @@ def run_cmd(source, cmd, cwd, agent_label="tau", launch_cwd=None):
             pass
     while proc.poll() is None:
         if signaled[0] is not None and not seen[0]:
-            hr.report("blocked", f"wrapper signal {signaled[0]}", pane, agent=agent_label)
             seen[0] = True
         time.sleep(0.1)
     stop.set()

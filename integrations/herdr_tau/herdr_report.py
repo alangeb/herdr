@@ -294,7 +294,9 @@ def tau_status_with_session(root=None):
         pass
     if not sock_path:
         return None, ""
-    for req in [{"type": "agent_card"}, {"type": "status"}]:
+    state = None
+    session_id = ""
+    for req in [{"type": "status"}, {"type": "agent_card"}]:
         try:
             c = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             c.settimeout(0.4)
@@ -302,11 +304,15 @@ def tau_status_with_session(root=None):
             c.sendall((json.dumps(req) + "\n").encode())
             data = c.recv(16384).decode("utf-8", "replace")
             c.close()
-            state, session_id = _state_session_from_text(data)
-            if state or session_id:
-                return state, session_id
+            s, sid = _state_session_from_text(data)
+            state = state or s
+            session_id = session_id or sid
+            if state and session_id:
+                break
         except Exception:
             pass
+    if state or session_id:
+        return state, session_id
     # Fall back to legacy state detection without session identity.
     return tau_status(root), ""
 

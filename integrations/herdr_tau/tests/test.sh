@@ -27,4 +27,5 @@ unset HERDR_ENV HERDR_PANE_ID HERDR_BIN_PATH HERDR_STUB_LOG HERDR_STATE_DIR HERD
 python3 "$root/herdr_report.py" report working "test" && echo "safe-outside OK"
 
 rm -f "$log"; rm -rf "$cache"
+bash "$root/tests/test_a2a.sh"
 echo OK
