@@ -72,6 +72,12 @@ def run_cmd(source, cmd, cwd, agent_label="tau", launch_cwd=None):
     seen = [False]
     signaled = [None]
     def handler(sig, frame):
+        if sig == getattr(signal, "SIGINT", None):
+            # No terminate/report: the child owns the two-press Ctrl+C UX.
+            # The terminal sends SIGINT to the child because it is in the
+            # wrapper's process group. Translating SIGINT into SIGTERM kills
+            # the child on the first press.
+            return
         signaled[0] = sig
         try:
             hr.report("blocked", f"wrapper signal {sig}", pane, agent=agent_label,
