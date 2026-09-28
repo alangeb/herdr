@@ -28,4 +28,5 @@ python3 "$root/herdr_report.py" report working "test" && echo "safe-outside OK"
 
 rm -f "$log"; rm -rf "$cache"
 bash "$root/tests/test_a2a.sh"
+bash "$root/tests/test_treeroot.sh"
 echo OK

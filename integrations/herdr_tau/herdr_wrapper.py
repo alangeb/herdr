@@ -9,7 +9,7 @@ if str(HERE) not in sys.path:
 import herdr_report as hr
 
 def find_root(env_root, fallbacks):
-    roots = [os.environ.get(env_root)] + fallbacks
+    roots = [os.environ.get(env_root)] + _tree_chain() + fallbacks
     for r in roots:
         if not r:
             continue
@@ -17,6 +17,17 @@ def find_root(env_root, fallbacks):
         if (p / "src" / "tau.py").exists():
             return p
     return None
+
+
+def _tree_chain(start=None):
+    """Working-tree roots: cwd and its ancestors that contain src/tau.py,
+    nearest first. An explicit TAU_ROOT/TAURLM_ROOT still wins; global
+    fallbacks are only consulted when no tree is found."""
+    try:
+        p = Path(start or os.getcwd()).expanduser().resolve()
+    except OSError:
+        return []
+    return [str(d) for d in [p, *p.parents] if (d / "src" / "tau.py").exists()]
 
 def run_cmd(source, cmd, cwd, agent_label="tau", launch_cwd=None):
     pane = hr.pane()
