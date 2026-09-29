@@ -169,6 +169,7 @@ pub(super) fn snapshot_with_completions(
                 terminal_title: agent.terminal_title,
                 terminal_title_stripped: agent.terminal_title_stripped,
                 agent_status: agent.agent_status,
+                content_seq: agent.content_seq,
                 state_change_seq: agent.state_change_seq,
                 state_labels,
                 tokens,

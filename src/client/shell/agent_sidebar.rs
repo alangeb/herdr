@@ -13,6 +13,7 @@ use super::*;
 pub(super) struct AgentRow {
     pub(super) pane_id: String,
     pub(super) status: crate::api::schema::AgentStatus,
+    pub(super) spin_key: Option<String>,
     pub(super) focused: bool,
     pub(super) rows: Vec<Vec<crate::ui::ResolvedToken>>,
 }
@@ -313,6 +314,7 @@ pub(super) fn agent_row(
     Some(AgentRow {
         pane_id: agent.pane_id.clone(),
         status: agent.agent_status,
+        spin_key: Some(format!("{}/{}", snapshot.boot_id, agent.workspace_id)),
         focused: agent.focused,
         rows,
     })
@@ -342,7 +344,10 @@ pub(super) fn render_agent_row(
     let status_style = Style::default().fg(status_color(row.status, palette));
     let secondary = Style::default().fg(palette.overlay0);
     let icon = (
-        status_icon(row.status, config.status_indicators),
+        row.spin_key
+            .as_deref()
+            .and_then(|key| super::working_glyph_for(key, row.status, config.status_indicators))
+            .unwrap_or_else(|| status_icon(row.status, config.status_indicators)),
         Style::default().fg(status_color(row.status, palette)),
     );
     let rows = if row.rows.is_empty() {

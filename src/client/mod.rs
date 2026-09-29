@@ -1352,6 +1352,8 @@ async fn run_client_loop(
                         )));
                     }
                     ServerMessage::PaneSurface(surface) => {
+                        if let Some(shell) = state.shell.as_mut() {
+                        }
                         if activation_message {
                             let progress = pending_activation.as_mut().map(|pending| {
                                 pending.receive_surface(&endpoint_id, generation, surface)
@@ -1387,6 +1389,8 @@ async fn run_client_loop(
                         }
                     }
                     ServerMessage::PaneSurfacePatch(patch) => {
+                        if let Some(shell) = state.shell.as_mut() {
+                        }
                         let patch_started = crate::render_prof::timer();
                         let apply_started = crate::render_prof::timer();
                         let outcome = state
@@ -2136,7 +2140,8 @@ async fn run_client_loop(
                         outcome.repaint |= notification_repaint
                             | shell.tick_copy_feedback(now)
                             | shell.tick_workspace_highlight(now)
-                            | shell.tick_endpoint_error(now);
+                            | shell.tick_endpoint_error(now)
+                            | shell.tick_status_animation(now);
                         let frame = outcome
                             .repaint
                             .then(|| shell.compose(state.reported_size.0, state.reported_size.1))

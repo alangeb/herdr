@@ -260,3 +260,41 @@ mod mobile;
 mod mouse_selection;
 mod popup_focus_projection;
 mod startup_overlays;
+
+#[test]
+fn churn_period_maps_with_fast_floor_and_crawl_ceiling() {
+    // Tens of updates/sec saturate at the fast floor.
+    assert!((churn_period_ms(10.0) - 150.0).abs() < 1e-9);
+    assert!((churn_period_ms(100.0) - 150.0).abs() < 1e-9);
+    // Steeper (1+ema)^-2 curve: big spread between slow and fast.
+    assert!((churn_period_ms(0.0) - 2400.0).abs() < 1e-9);
+    assert!((churn_period_ms(1.0) - 800.0).abs() < 1e-9);
+    assert!((churn_period_ms(4.0) - 150.0).abs() < 1e-9); // 128 -> clamped
+    assert!(churn_period_ms(-1.0) >= 150.0 && churn_period_ms(-1.0) <= 2400.0);
+}
+
+#[test]
+fn working_glyph_shape_and_set_selection() {
+    // Braille 8-step cycle at fast/normal periods.
+    let fast: Vec<&str> = (0..8).map(|f| working_glyph(400.0, f as f64, false)).collect();
+    assert_eq!(fast, vec!["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧"]);
+    assert_eq!(working_glyph(400.0, 8.0, false), "⠋");
+    // Crawl speed fades to the sparse garnish set.
+    let slow: Vec<&str> = (0..4).map(|f| working_glyph(1600.0, f as f64, false)).collect();
+    assert_eq!(slow, vec!["⠁", "⠈", "⠐", "⠈"]);
+    // Stall overrides both with the orange pulse set.
+    assert_eq!(working_glyph(200.0, 0.0, true), "◐");
+    assert_eq!(working_glyph(200.0, 1.0, true), "◌");
+}
+
+#[test]
+fn spinners_style_animates_working_and_keeps_other_states_static() {
+    use crate::config::StatusIndicatorStyle;
+    assert!(
+        SPINNER_FRAMES.contains(&status_icon(AgentStatus::Working, StatusIndicatorStyle::Spinners))
+    );
+    assert_eq!(status_icon(AgentStatus::Blocked, StatusIndicatorStyle::Spinners), "×");
+    assert_eq!(status_icon(AgentStatus::Done, StatusIndicatorStyle::Spinners), "✓");
+    assert_eq!(status_icon(AgentStatus::Idle, StatusIndicatorStyle::Spinners), "○");
+    assert_eq!(status_icon(AgentStatus::Unknown, StatusIndicatorStyle::Spinners), "·");
+}

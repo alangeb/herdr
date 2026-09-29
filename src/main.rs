@@ -332,7 +332,10 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # agent_panel_sort = "spaces"
 
 # Agent status indicators: "dots" preserves the compact color marks; "symbols" uses
-# distinct static glyphs for blocked, working, done, idle, and unknown states.
+# distinct static glyphs for blocked, working, done, idle, and unknown states;
+# "spinners" matches "symbols" but animates the working glyph (braille 8-step
+# ⠋⠙⠹⠸⠼⠴⠦⠧), winding up while the focused agent streams output, fading to a
+# sparse crawl when quiet, and pulsing orange when output stalls 60 seconds.
 # status_indicators = "dots"
 
 # Accent color for highlights, borders, and navigation UI.

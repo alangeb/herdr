@@ -93,13 +93,21 @@ pub(crate) fn render_collapsed_sidebar(
             number_style,
         );
         let status = workspace.agent_status;
+        let spinner_key = format!("{}/{}", snapshot.boot_id, workspace.workspace_id);
+        let stalled = status == crate::api::schema::AgentStatus::Working
+            && super::spinner_stalled_for(&spinner_key);
         put_text(
             buffer,
             rect.x.saturating_add(2),
             rect.y,
             rect.width.saturating_sub(2),
-            status_icon(status, config.status_indicators),
-            Style::default().fg(status_color(status, palette)),
+            super::working_glyph_for(&spinner_key, status, config.status_indicators)
+                .unwrap_or_else(|| status_icon(status, config.status_indicators)),
+            Style::default().fg(if stalled {
+                super::STALL_ORANGE
+            } else {
+                status_color(status, palette)
+            }),
         );
         hits.workspaces.push(WorkspaceHit {
             rect,
@@ -326,6 +334,7 @@ pub(crate) fn render_sidebar(
             rect,
             status,
             config.status_indicators,
+            Some(format!("{}/{}", snapshot.boot_id, workspace.workspace_id)),
             entry,
             rows,
             workspace.focused,
@@ -657,6 +666,7 @@ pub(in crate::client::shell) fn render_workspace_rows(
     area: Rect,
     status: crate::api::schema::AgentStatus,
     indicators: crate::config::StatusIndicatorStyle,
+    spin_key: Option<String>,
     entry: &WorkspaceEntry,
     rows: Vec<Vec<crate::ui::ResolvedToken>>,
     focused: bool,
@@ -713,10 +723,14 @@ pub(in crate::client::shell) fn render_workspace_rows(
         } else {
             palette.overlay0
         });
+        let glyph = spin_key
+            .as_deref()
+            .and_then(|key| super::working_glyph_for(key, status, indicators))
+            .unwrap_or_else(|| status_icon(status, indicators));
         let spans = crate::ui::resolved_token_spans(
             row,
             (
-                status_icon(status, indicators),
+                glyph,
                 Style::default().fg(status_color(status, palette)),
             ),
             Style::default().fg(status_color(status, palette)),

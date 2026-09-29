@@ -394,6 +394,10 @@ impl App {
             focused: pane.focused,
             launch_pending: terminal.managed_agent_launch_pending(),
             interactive_ready: terminal.managed_agent_interactive_ready(),
+            content_seq: self
+                .terminal_runtimes
+                .get(&pane_state.attached_terminal_id)
+                .map_or(0, |runtime| runtime.content_seq()),
             state_change_seq: terminal.last_agent_state_change_seq.unwrap_or(0),
             completion_seq: terminal.last_agent_completion_seq,
             cwd: pane.cwd,

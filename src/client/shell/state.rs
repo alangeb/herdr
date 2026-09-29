@@ -1853,6 +1853,117 @@ impl ClientShellState {
         false
     }
 
+    /// Attributes a pane-surface patch to the workspace that owns the
+    /// currently visible pane (the only one streaming content to us).
+    pub(crate) fn tick_status_animation(&mut self, now: std::time::Instant) -> bool {
+        use crate::api::schema::AgentStatus;
+        let Ok(mut anim) = super::spinner_anim().write() else {
+            return false;
+        };
+        let spinners =
+            self.config.status_indicators == crate::config::StatusIndicatorStyle::Spinners;
+        // Working rows live on *every* endpoint (including remote machines),
+        // keyed by endpoint boot so ids cannot collide. Churn comes from the
+        // server-reported content_seq totals, which arrive for *all* panes,
+        // so background rows animate from real output activity too.
+        let mut working_rows: Vec<String> = Vec::new();
+        let mut seq_sums: std::collections::HashMap<String, u64> =
+            std::collections::HashMap::new();
+        for endpoint in &self.endpoints {
+            let Some(snapshot) = endpoint.snapshot.as_deref() else {
+                continue;
+            };
+            for workspace in &snapshot.workspaces {
+                if workspace.agent_status == AgentStatus::Working {
+                    working_rows.push(format!(
+                        "{}/{}",
+                        snapshot.boot_id, workspace.workspace_id
+                    ));
+                }
+            }
+            for agent in &snapshot.agents {
+                if agent.agent_status == AgentStatus::Working {
+                    *seq_sums
+                        .entry(format!("{}/{}", snapshot.boot_id, agent.workspace_id))
+                        .or_insert(0) += agent.content_seq;
+                }
+            }
+        }
+        if !spinners || working_rows.is_empty() {
+            let visible = anim.last_key.take().is_some();
+            anim.by_workspace.clear();
+            anim.seq_base.clear();
+            anim.last_tick = None;
+            return visible;
+        }
+        let dt = anim
+            .last_tick
+            .map(|last| now.saturating_duration_since(last).as_millis() as f64)
+            .unwrap_or(0.0);
+        anim.last_tick = Some(now);
+        let dt_s = (dt.min(1000.0) / 1000.0).max(0.001);
+        let tuning = super::spin_tuning();
+        let tau_attack = tuning.tau_attack_s;
+        let tau_decay = tuning.tau_decay_s;
+        let mut key: Vec<(String, bool, usize, usize)> = Vec::with_capacity(working_rows.len());
+        for workspace_id in &working_rows {
+            let delta = match seq_sums.get(workspace_id) {
+                Some(total) => {
+                    let grew = match anim.seq_base.get(workspace_id) {
+                        Some(prev) => total.saturating_sub(*prev),
+                        None => 0,
+                    };
+                    anim.seq_base.insert(workspace_id.clone(), *total);
+                    Some(grew)
+                }
+                None => None,
+            };
+            let entry = anim
+                .by_workspace
+                .entry(workspace_id.clone())
+                .or_insert_with(super::WorkspaceSpin::new);
+            if let Some(delta) = delta {
+                if delta > 0 || entry.last_growth.is_none() {
+                    entry.last_growth = Some(now);
+                }
+                let target = (delta as f64) / dt_s;
+                let tau = if delta > 0 { tau_attack } else { tau_decay };
+                let alpha = 1.0 - (-dt_s / tau).exp();
+                entry.churn_ema += (target - entry.churn_ema) * alpha;
+                entry.period_ms = super::churn_period_ms(entry.churn_ema);
+            } else {
+                entry.period_ms = 400.0;
+            }
+            let silent_for = entry
+                .last_growth
+                .map(|g| now.saturating_duration_since(g).as_secs_f64())
+                .unwrap_or(0.0);
+            entry.stalled = silent_for >= 60.0;
+            if entry.stalled {
+                entry.pulse_phase += dt / 1000.0;
+            } else {
+                entry.phase += dt / entry.period_ms.max(1.0);
+            }
+            key.push((
+                workspace_id.clone(),
+                entry.stalled,
+                (entry.phase.floor() as usize) % super::SPINNER_FRAMES.len(),
+                (entry.pulse_phase.floor() as usize) % super::STALL_FRAMES.len(),
+            ));
+        }
+        anim.by_workspace
+            .retain(|workspace_id, _| working_rows.iter().any(|w| w == workspace_id));
+        anim.seq_base
+            .retain(|workspace_id, _| working_rows.iter().any(|w| w == workspace_id));
+        key.sort();
+        if anim.last_key.as_ref() != Some(&key) {
+            anim.last_key = Some(key);
+            true
+        } else {
+            false
+        }
+    }
+
     pub(crate) fn timer_delay(&self, now: std::time::Instant) -> std::time::Duration {
         let default = std::time::Duration::from_millis(100);
         self.selection_autoscroll_deadline

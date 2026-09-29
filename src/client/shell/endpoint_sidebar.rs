@@ -177,10 +177,25 @@ pub(super) fn render_collapsed(
                 rect.x.saturating_add(number_width),
                 rect.y,
                 rect.width.saturating_sub(number_width),
-                status_icon(workspace.agent_status, config.status_indicators),
+                super::working_glyph_for(
+                    &format!("{}/{}", snapshot.boot_id, workspace.workspace_id),
+                    workspace.agent_status,
+                    config.status_indicators,
+                )
+                .unwrap_or_else(|| {
+                    status_icon(workspace.agent_status, config.status_indicators)
+                }),
                 Style::default()
                     .fg(if stale {
                         palette.overlay0
+                    } else if workspace.agent_status
+                        == crate::api::schema::AgentStatus::Working
+                        && super::spinner_stalled_for(&format!(
+                            "{}/{}",
+                            snapshot.boot_id, workspace.workspace_id
+                        ))
+                    {
+                        super::STALL_ORANGE
                     } else {
                         status_color(workspace.agent_status, palette)
                     })
@@ -473,6 +488,7 @@ pub(super) fn render_expanded(
                     nested,
                     status,
                     config.status_indicators,
+                    Some(format!("{}/{}", snapshot.boot_id, workspace.workspace_id)),
                     entry,
                     tokens,
                     endpoint_active && workspace.focused,

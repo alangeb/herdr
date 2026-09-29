@@ -217,6 +217,7 @@ pub struct AgentInfo {
     #[serde(default, skip_serializing_if = "super::is_false")]
     pub interactive_ready: bool,
     #[serde(default)]
+    pub content_seq: u64,
     pub state_change_seq: u64,
     /// The current idle transition completed work, independently of who has viewed it.
     #[serde(default, skip_serializing_if = "Option::is_none")]

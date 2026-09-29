@@ -346,7 +346,14 @@ Agent status uses compact colored dots by default. To distinguish blocked, worki
 status_indicators = "symbols"
 ```
 
-The symbols are static, so this option does not enable spinner animation.
+The symbols are static; for an animated working indicator use `status_indicators = "spinners"`,
+which runs an 8-step braille spinner (⠋⠙⠹⠸⠼⠴⠦⠧) while an agent works. All other
+states stay static, and repaints only happen while something is working. The spin
+adapts to each agent's real output churn (reported per pane by the server), so
+background tabs animate too: fast while an agent streams, calming within
+seconds when it pauses, fading to a sparse shape (⠁⠈⠐) when quiet. A working
+agent with no output for 60 seconds gets a slow orange pulse (◐/◌) as a stall
+warning, wherever its tab is.
 
 ### Sidebar row layouts
 

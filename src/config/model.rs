@@ -114,6 +114,7 @@ pub enum StatusIndicatorStyle {
     #[default]
     Dots,
     Symbols,
+    Spinners,
 }
 
 impl StatusIndicatorStyle {
@@ -121,6 +122,7 @@ impl StatusIndicatorStyle {
         match self {
             Self::Dots => "dots",
             Self::Symbols => "symbols",
+            Self::Spinners => "spinners",
         }
     }
 }
