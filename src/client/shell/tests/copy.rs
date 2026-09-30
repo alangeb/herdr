@@ -1091,6 +1091,8 @@ fn navigator_searches_ancestor_context_and_keeps_split_agents_individually_actio
     second.foreground_cwd = Some("/repo/subproject".into());
     projected.panes.push(second);
     let first_agent = ClientShellAgent {
+        content_seq: 0,
+        terminal_id: String::new(),
         pane_id: "pane_1".into(),
         workspace_id: "ws_1".into(),
         tab_id: "tab_1".into(),

@@ -1075,6 +1075,8 @@ pub struct ClientShellPane {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClientShellAgent {
     pub pane_id: String,
+    #[serde(default)]
+    pub terminal_id: String,
     pub workspace_id: String,
     pub tab_id: String,
     pub name: Option<String>,
@@ -1463,6 +1465,9 @@ pub enum ServerMessage {
     /// This variant is append-only. Its bincode tag and two-string payload are part
     /// of endpoint generation 1 and must not change.
     EndpointControl { kind: String, data: String },
+    /// Sampled per-terminal content counters for churn animation.
+    /// Append-only; new variants must always go after this one.
+    ContentSeqs(Vec<(String, u64)>),
 }
 
 // ---------------------------------------------------------------------------

@@ -884,6 +884,8 @@ pub(crate) struct ClientShellState {
     pub(super) selection_repaint_deadline: Option<std::time::Instant>,
     pub(super) hits: ShellHitMap,
     pub(super) endpoints: Vec<ClientShellEndpoint>,
+    /// Live per-terminal content counters broadcast by the server.
+    pub(super) content_seqs: std::collections::HashMap<String, u64>,
     pub(super) active_endpoint_id: ClientEndpointId,
     pub(super) collapsed_endpoints: HashSet<ClientEndpointId>,
     pub(super) mode: ClientShellMode,
@@ -1048,6 +1050,7 @@ impl ClientShellState {
             last_composed_at: None,
             selection_repaint_deadline: None,
             hits: ShellHitMap::default(),
+            content_seqs: std::collections::HashMap::new(),
             endpoints: vec![local_endpoint()],
             active_endpoint_id: ClientEndpointId::Local,
             collapsed_endpoints: HashSet::new(),
@@ -1883,9 +1886,12 @@ impl ClientShellState {
             }
             for agent in &snapshot.agents {
                 if agent.agent_status == AgentStatus::Working {
+                    let seq = agent
+                        .content_seq
+                        .max(self.content_seqs.get(&agent.terminal_id).copied().unwrap_or(0));
                     *seq_sums
                         .entry(format!("{}/{}", snapshot.boot_id, agent.workspace_id))
-                        .or_insert(0) += agent.content_seq;
+                        .or_insert(0) += seq;
                 }
             }
         }
@@ -1961,6 +1967,12 @@ impl ClientShellState {
             true
         } else {
             false
+        }
+    }
+
+    pub(crate) fn update_content_seqs(&mut self, seqs: Vec<(String, u64)>) {
+        for (id, seq) in seqs {
+            self.content_seqs.insert(id, seq);
         }
     }
 

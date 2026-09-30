@@ -23,6 +23,8 @@ fn agent(
     state_change_seq: u64,
 ) -> ClientShellAgent {
     ClientShellAgent {
+        content_seq: 0,
+        terminal_id: String::new(),
         pane_id: "pane_1".into(),
         workspace_id: "ws_1".into(),
         tab_id: "tab_1".into(),
@@ -125,6 +127,8 @@ fn state_with_scrollable_agents() -> (ClientShellState, ClientEndpointId) {
             .unwrap();
         projection.agents = (0..8)
             .map(|index| ClientShellAgent {
+                content_seq: 0,
+                terminal_id: String::new(),
                 pane_id: format!("pane_{}", index + 1),
                 focused: index == 0,
                 ..agent(&format!("agent {index}"), AgentStatus::Idle, 1)
@@ -1164,6 +1168,8 @@ fn current_workspace_or_blocked_keeps_foreign_attention_only() {
     remote.agents = vec![
         agent("remote idle", AgentStatus::Idle, 1),
         ClientShellAgent {
+            content_seq: 0,
+            terminal_id: String::new(),
             pane_id: "pane_2".into(),
             name: Some("remote blocked".into()),
             agent_status: AgentStatus::Blocked,

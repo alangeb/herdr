@@ -1351,6 +1351,11 @@ async fn run_client_loop(
                             io::Error::new(io::ErrorKind::InvalidData, message),
                         )));
                     }
+                    ServerMessage::ContentSeqs(seqs) => {
+                        if let Some(shell) = &mut state.shell {
+                            shell.update_content_seqs(seqs);
+                        }
+                    }
                     ServerMessage::PaneSurface(surface) => {
                         if let Some(shell) = state.shell.as_mut() {
                         }

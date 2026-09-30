@@ -514,6 +514,7 @@ impl HeadlessServer {
                 needs_full_render = true;
                 crate::render_prof::event("full_render_cause.server_events");
             }
+            self.sample_content_seqs();
             if self.should_quit.load(Ordering::Acquire) {
                 continue;
             }
@@ -1666,7 +1667,43 @@ impl HeadlessServer {
     }
 
     /// Sends a message to all connected clients.
-    /// Broken connections are tracked and cleaned up.
+    /// Broken 
+    /// Fan out sampled per-terminal content counters so clients can animate
+    /// agent spinners from real output churn for *all* tabs, not just the
+    /// focused one. Rate-limited and change-gated to keep the wire cheap.
+    fn sample_content_seqs(&mut self) {
+        if self.clients.is_empty() {
+            return;
+        }
+        thread_local! {
+            static CHURN: std::cell::RefCell<(std::time::Instant, std::collections::HashMap<String, u64>)> =
+                std::cell::RefCell::new((
+                    std::time::Instant::now() - std::time::Duration::from_secs(1),
+                    std::collections::HashMap::new(),
+                ));
+        }
+        CHURN.with(|cell| {
+            let mut cell = cell.borrow_mut();
+            if cell.0.elapsed() < std::time::Duration::from_millis(500) {
+                return;
+            }
+            cell.0 = std::time::Instant::now();
+            let live: Vec<(String, u64)> = self
+                .app
+                .terminal_runtimes
+                .iter()
+                .map(|(id, runtime)| (id.to_string(), runtime.content_seq()))
+                .collect();
+            let changed = live
+                .iter()
+                .any(|(k, v)| cell.1.get(k) != Some(v));
+            if !changed {
+                return;
+            }
+            cell.1 = live.iter().cloned().collect();
+            self.send_to_all_clients(ServerMessage::ContentSeqs(live.clone()));
+        });
+    }
     fn send_to_all_clients(&mut self, msg: ServerMessage) {
         let serialized = match Self::frame_server_message(&msg) {
             Ok(framed) => framed,
