@@ -6702,6 +6702,12 @@
                 "null"
               ]
             },
+            "content_seq": {
+              "default": 0,
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
             "cwd": {
               "type": [
                 "string",
@@ -6747,7 +6753,6 @@
               "type": "boolean"
             },
             "state_change_seq": {
-              "default": 0,
               "format": "uint64",
               "minimum": 0,
               "type": "integer"
@@ -6803,6 +6808,7 @@
             "tab_id",
             "pane_id",
             "focused",
+            "state_change_seq",
             "revision"
           ],
           "type": "object"
