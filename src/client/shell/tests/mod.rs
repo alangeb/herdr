@@ -281,10 +281,10 @@ fn working_glyph_shape_and_set_selection() {
     assert_eq!(working_glyph(400.0, 8.0, false), "⠋");
     // Crawl speed fades to the sparse garnish set.
     let slow: Vec<&str> = (0..4).map(|f| working_glyph(1600.0, f as f64, false)).collect();
-    assert_eq!(slow, vec!["⠁", "⠈", "⠐", "⠈"]);
+    assert_eq!(slow, vec!["⠁", "⠂", "⠄", "⠈"]);
     // Stall overrides both with the orange pulse set.
-    assert_eq!(working_glyph(200.0, 0.0, true), "◐");
-    assert_eq!(working_glyph(200.0, 1.0, true), "◌");
+    assert_eq!(working_glyph(200.0, 0.0, true), "⠐");
+    assert_eq!(working_glyph(200.0, 1.0, true), "⠐⠂");
 }
 
 #[test]
