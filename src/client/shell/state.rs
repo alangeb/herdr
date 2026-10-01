@@ -1866,52 +1866,78 @@ impl ClientShellState {
         };
         let spinners =
             self.config.status_indicators == crate::config::StatusIndicatorStyle::Spinners;
-        // Working rows live on *every* endpoint (including remote machines),
-        // keyed by endpoint boot so ids cannot collide. Churn comes from the
-        // server-reported content_seq totals, which arrive for *all* panes,
-        // so background rows animate from real output activity too.
-        let mut working_rows: Vec<String> = Vec::new();
-        let mut seq_sums: std::collections::HashMap<String, u64> =
-            std::collections::HashMap::new();
+        // Animation is keyed per agent: boot/workspace/terminal. Churn comes
+        // from server-reported content_seq per pane; workspace rows render an
+        // aggregate (fastest agent wins; breathing needs ALL stalled).
+        use std::collections::HashMap;
+        let mut agent_rows: Vec<String> = Vec::new();
+        let mut agent_seq: HashMap<String, u64> = HashMap::new();
+        let mut ws_rows: Vec<String> = Vec::new();
+        let mut present_boots: Vec<String> = Vec::new();
         for endpoint in &self.endpoints {
             let Some(snapshot) = endpoint.snapshot.as_deref() else {
                 continue;
             };
+            present_boots.push(snapshot.boot_id.clone());
             for workspace in &snapshot.workspaces {
                 if workspace.agent_status == AgentStatus::Working {
-                    working_rows.push(format!(
-                        "{}/{}",
-                        snapshot.boot_id, workspace.workspace_id
-                    ));
+                    ws_rows.push(format!("{}/{}", snapshot.boot_id, workspace.workspace_id));
                 }
             }
             for agent in &snapshot.agents {
                 if agent.agent_status == AgentStatus::Working {
-                    let seq = agent
-                        .content_seq
-                        .max(self.content_seqs.get(&agent.terminal_id).copied().unwrap_or(0));
-                    *seq_sums
-                        .entry(format!("{}/{}", snapshot.boot_id, agent.workspace_id))
-                        .or_insert(0) += seq;
+                    let key = format!(
+                        "{}/{}/{}",
+                        snapshot.boot_id, agent.workspace_id, agent.terminal_id
+                    );
+                    agent_rows.push(key.clone());
+                    let seq = agent.content_seq.max(
+                        self.content_seqs
+                            .get(&agent.terminal_id)
+                            .copied()
+                            .unwrap_or(0),
+                    );
+                    agent_seq.insert(key, seq);
                 }
             }
         }
-        if !spinners || working_rows.is_empty() {
-            let visible = anim.last_key.take().is_some();
-            if self.config.agent_finished_bell {
-                let n = anim
-                    .by_workspace
-                    .iter()
-                    .filter(|(k, _)| working_rows.iter().any(|w| w == *k))
-                    .count();
-                let vanished = anim.by_workspace.len().saturating_sub(n);
-                if vanished > 0 {
+        // Durable-absence eviction/cleanup: absent >1 s rings the finish bell
+        // only when the agent's endpoint data is still present (real stop),
+        // and only when finished-agent bells are enabled. Endpoint blips and
+        // handoffs are dropped silently.
+        {
+            let mut stale: Vec<String> = Vec::new();
+            let mut bells = 0usize;
+            for (entry_key, entry) in anim.by_workspace.iter_mut() {
+                if agent_rows.iter().any(|k| k == entry_key) {
+                    continue;
+                }
+                entry.absent_ticks += 1;
+                if entry.absent_ticks >= 10 {
+                    let boot = entry_key.split('/').next().unwrap_or_default();
+                    if self.config.agent_finished_bell && present_boots.iter().any(|b| b == boot) {
+                        bells += 1;
+                    }
+                    stale.push(entry_key.clone());
+                }
+            }
+            for entry_key in &stale {
+                anim.by_workspace.remove(entry_key);
+                anim.seq_base.remove(entry_key);
+            }
+            if bells > 0 && !cfg!(test) {
+                use std::io::IsTerminal;
+                if std::io::stdout().is_terminal() {
                     let _ = crate::terminal_effects::write_terminal_bells(
                         &mut std::io::stdout(),
-                        u16::try_from(vanished.min(3)).unwrap_or(3),
+                        u16::try_from(bells.min(3)).unwrap_or(3),
                     );
                 }
             }
+        }
+
+        if !spinners {
+            let visible = anim.last_key.take().is_some();
             anim.by_workspace.clear();
             anim.seq_base.clear();
             anim.last_tick = None;
@@ -1926,23 +1952,25 @@ impl ClientShellState {
         let tuning = super::spin_tuning();
         let tau_attack = tuning.tau_attack_s;
         let tau_decay = tuning.tau_decay_s;
-        let mut key: Vec<(String, bool, usize, usize)> = Vec::with_capacity(working_rows.len());
-        for workspace_id in &working_rows {
-            let delta = match seq_sums.get(workspace_id) {
+        let tau_slow = tuning.tau_slow_s.max(0.05);
+        let mut key: Vec<(String, bool, usize, usize)> = Vec::with_capacity(agent_rows.len());
+        for workspace_key in &agent_rows {
+            let delta = match agent_seq.get(workspace_key) {
                 Some(total) => {
-                    let grew = match anim.seq_base.get(workspace_id) {
+                    let grew = match anim.seq_base.get(workspace_key) {
                         Some(prev) => total.saturating_sub(*prev),
                         None => 0,
                     };
-                    anim.seq_base.insert(workspace_id.clone(), *total);
+                    anim.seq_base.insert(workspace_key.clone(), *total);
                     Some(grew)
                 }
                 None => None,
             };
             let entry = anim
                 .by_workspace
-                .entry(workspace_id.clone())
+                .entry(workspace_key.clone())
                 .or_insert_with(super::WorkspaceSpin::new);
+            entry.absent_ticks = 0;
             if let Some(delta) = delta {
                 if delta > 0 || entry.last_growth.is_none() {
                     entry.last_growth = Some(now);
@@ -1951,7 +1979,9 @@ impl ClientShellState {
                 let tau = if delta > 0 { tau_attack } else { tau_decay };
                 let alpha = 1.0 - (-dt_s / tau).exp();
                 entry.churn_ema += (target - entry.churn_ema) * alpha;
-                entry.period_ms = super::churn_period_ms(entry.churn_ema);
+                let alpha_s = 1.0 - (-dt_s / tau_slow).exp();
+                entry.ema_slow += (entry.churn_ema - entry.ema_slow) * alpha_s;
+                entry.period_ms = super::churn_period_ms(entry.ema_slow);
             } else {
                 entry.period_ms = 400.0;
             }
@@ -1966,29 +1996,58 @@ impl ClientShellState {
                 entry.phase += dt / entry.period_ms.max(1.0);
             }
             key.push((
-                workspace_id.clone(),
+                workspace_key.clone(),
                 entry.stalled,
                 (entry.phase.floor() as usize) % super::SPINNER_FRAMES.len(),
                 (entry.pulse_phase.floor() as usize) % super::STALL_FRAMES.len(),
             ));
         }
-        if self.config.agent_finished_bell {
-            let vanished = anim
-                .by_workspace
-                .keys()
-                .filter(|k| !working_rows.iter().any(|w| w == *k))
-                .count();
-            if vanished > 0 {
-                let _ = crate::terminal_effects::write_terminal_bells(
-                    &mut std::io::stdout(),
-                    u16::try_from(vanished.min(3)).unwrap_or(3),
-                );
+        // Aggregate repaint keys per workspace row so those rows also drive
+        // repaints when the winning member's glyph changes.
+        let mut agg_ws: Vec<String> = ws_rows.clone();
+        for k in &agent_rows {
+            if let Some(p) = k.rfind('/') {
+                let ws = k[..p].to_string();
+                if !agg_ws.iter().any(|w| w == &ws) {
+                    agg_ws.push(ws);
+                }
             }
         }
-        anim.by_workspace
-            .retain(|workspace_id, _| working_rows.iter().any(|w| w == workspace_id));
-        anim.seq_base
-            .retain(|workspace_id, _| working_rows.iter().any(|w| w == workspace_id));
+        for raw in &agg_ws {
+            let prefix = format!("{raw}/");
+            let members: Vec<&super::WorkspaceSpin> = anim
+                .by_workspace
+                .iter()
+                .filter(|(k, _)| k.starts_with(&prefix))
+                .map(|(_, e)| e)
+                .collect();
+            if members.is_empty() {
+                continue;
+            }
+            let all_stalled = members.iter().all(|e| e.stalled);
+            if all_stalled {
+                let pulse = members
+                    .iter()
+                    .map(|e| e.pulse_phase)
+                    .fold(0.0_f64, f64::max);
+                key.push((
+                    format!("AGG/{raw}"),
+                    true,
+                    0,
+                    (pulse.floor() as usize) % super::STALL_FRAMES.len(),
+                ));
+            } else if let Some(fastest) = members
+                .iter()
+                .min_by(|x, y| x.period_ms.total_cmp(&y.period_ms))
+            {
+                key.push((
+                    format!("AGG/{raw}"),
+                    false,
+                    (fastest.phase.floor() as usize) % super::SPINNER_FRAMES.len(),
+                    0,
+                ));
+            }
+        }
         key.sort();
         if anim.last_key.as_ref() != Some(&key) {
             anim.last_key = Some(key);

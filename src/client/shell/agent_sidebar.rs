@@ -314,7 +314,10 @@ pub(super) fn agent_row(
     Some(AgentRow {
         pane_id: agent.pane_id.clone(),
         status: agent.agent_status,
-        spin_key: Some(format!("{}/{}", snapshot.boot_id, agent.workspace_id)),
+        spin_key: Some(format!(
+            "{}/{}/{}",
+            snapshot.boot_id, agent.workspace_id, agent.terminal_id
+        )),
         focused: agent.focused,
         rows,
     })

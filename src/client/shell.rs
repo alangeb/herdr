@@ -175,14 +175,12 @@ fn pane_surface_topology_signature(surface: &PaneSurfaceFrame) -> u64 {
     hash
 }
 
-pub(crate) const SPINNER_FRAMES: [&str; 8] =
-    ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧"];
+pub(crate) const SPINNER_FRAMES: [&str; 8] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧"];
 /// Shape garnish: at crawl speed the spin fades to this sparse set, so slow
 /// differs from fast in shape as well as tempo.
 pub(crate) const SPARSE_FRAMES: [&str; 8] = ["⠁", "⠈", "⠐", "⠠", "⢀", "⡀", "⠄", "⠂"];
 pub(crate) const STALL_FRAMES: [&str; 2] = ["⠐", "⠒"];
-pub(crate) const STALL_ORANGE: ratatui::style::Color =
-    ratatui::style::Color::Rgb(254, 165, 0);
+pub(crate) const STALL_ORANGE: ratatui::style::Color = ratatui::style::Color::Rgb(254, 165, 0);
 
 /// Churn-adaptive spinner state. The client render path is single-threaded
 /// (one tokio runtime thread drives tick and paint); a process-global keeps
@@ -196,8 +194,15 @@ pub(crate) struct WorkspaceSpin {
     pub(crate) pulse_phase: f64,
     pub(crate) period_ms: f64,
     pub(crate) churn_ema: f64,
+    /// Slow (1 s window) churn average that feeds the period mapping; it
+    /// damps one-shot repaint bursts so a resize burp cannot saturate speed.
+    pub(crate) ema_slow: f64,
     pub(crate) last_growth: Option<std::time::Instant>,
     pub(crate) stalled: bool,
+    /// Ticks the entry has been absent from the working set; eviction
+    /// (bell or silent) only after the absence is durable, so snapshot
+    /// blips neither revive agents nor ring false finish bells.
+    pub(crate) absent_ticks: u32,
 }
 
 impl WorkspaceSpin {
@@ -207,16 +212,19 @@ impl WorkspaceSpin {
             pulse_phase: 0.0,
             period_ms: 400.0,
             churn_ema: 0.0,
+            ema_slow: 0.0,
             last_growth: None,
             stalled: false,
+            absent_ticks: 0,
         }
     }
 }
 
 #[derive(Debug)]
 pub(crate) struct SpinnerAnim {
+    /// Animation state keyed per agent: "boot_id/workspace_id/terminal_id".
     by_workspace: std::collections::HashMap<String, WorkspaceSpin>,
-    /// Last observed per-workspace content_seq totals from server snapshots.
+    /// Last observed content_seq per agent key (same "boot/ws/term" form).
     seq_base: std::collections::HashMap<String, u64>,
     last_tick: Option<std::time::Instant>,
     /// Rendered-glyph key across all working rows; repaints only on change.
@@ -249,6 +257,7 @@ pub(crate) struct SpinTuning {
     pub(crate) sparse_from_ms: f64,
     pub(crate) tau_attack_s: f64,
     pub(crate) tau_decay_s: f64,
+    pub(crate) tau_slow_s: f64,
 }
 
 impl SpinTuning {
@@ -259,6 +268,7 @@ impl SpinTuning {
             sparse_from_ms: 1600.0,
             tau_attack_s: 0.4,
             tau_decay_s: 1.5,
+            tau_slow_s: 1.0,
         }
     }
 
@@ -277,6 +287,7 @@ impl SpinTuning {
             sparse_from_ms: get("HERDR_SPIN_SPARSE_MS", d.sparse_from_ms),
             tau_attack_s: get("HERDR_SPIN_TAU_ATTACK_S", d.tau_attack_s),
             tau_decay_s: get("HERDR_SPIN_TAU_DECAY_S", d.tau_decay_s),
+            tau_slow_s: get("HERDR_SPIN_TAU_SLOW_S", d.tau_slow_s),
         };
         Self {
             floor_ms: t.floor_ms.min(t.ceil_ms),
@@ -316,11 +327,25 @@ pub(crate) fn working_glyph(period_ms: f64, phase: f64, stalled: bool) -> &'stat
 /// workspace that currently owns the visible pane. Bursts push that entry's
 /// churn EMA quickly (short attack time-constant); decay is continuous.
 pub(crate) fn spinner_stalled_for(workspace_id: &str) -> bool {
-    spinner_anim()
-        .read()
-        .ok()
-        .and_then(|a| a.by_workspace.get(workspace_id).map(|e| e.stalled))
-        .unwrap_or(false)
+    let Ok(a) = spinner_anim().read() else {
+        return false;
+    };
+    if let Some(e) = a.by_workspace.get(workspace_id) {
+        return e.stalled;
+    }
+    // Workspace-level key: aggregate over member agents (stalled only when
+    // every member is stalled; no members is never stalled).
+    let prefix = format!("{workspace_id}/");
+    let mut seen = false;
+    for (key, e) in &a.by_workspace {
+        if key.starts_with(&prefix) {
+            seen = true;
+            if !e.stalled {
+                return false;
+            }
+        }
+    }
+    seen
 }
 
 /// Per-workspace animated glyph for Working+Spinners; None means the caller
@@ -335,14 +360,41 @@ pub(crate) fn working_glyph_for(
     {
         return None;
     }
-    Some(match spinner_anim().read() {
-        Ok(a) => match a.by_workspace.get(workspace_id) {
-            Some(e) if e.stalled => working_glyph(e.period_ms, e.pulse_phase, true),
-            Some(e) => working_glyph(e.period_ms, e.phase, false),
-            None => SPINNER_FRAMES[0],
-        },
-        Err(_) => SPINNER_FRAMES[0],
-    })
+    let Ok(a) = spinner_anim().read() else {
+        return Some(SPINNER_FRAMES[0]);
+    };
+    if let Some(e) = a.by_workspace.get(workspace_id) {
+        return Some(if e.stalled {
+            working_glyph(e.period_ms, e.pulse_phase, true)
+        } else {
+            working_glyph(e.period_ms, e.phase, false)
+        });
+    }
+    // Workspace-level key: aggregate members - fastest (min period) agent's
+    // glyph wins; glyph breathes only when all members are stalled.
+    let prefix = format!("{workspace_id}/");
+    let members: Vec<&WorkspaceSpin> = a
+        .by_workspace
+        .iter()
+        .filter(|(key, _)| key.starts_with(&prefix))
+        .map(|(_, e)| e)
+        .collect();
+    if members.is_empty() {
+        return Some(SPINNER_FRAMES[0]);
+    }
+    let all_stalled = members.iter().all(|e| e.stalled);
+    if all_stalled {
+        let pulse = members
+            .iter()
+            .map(|e| e.pulse_phase)
+            .fold(0.0_f64, f64::max);
+        return Some(working_glyph(400.0, pulse, true));
+    }
+    let fastest = members
+        .iter()
+        .min_by(|x, y| x.period_ms.total_cmp(&y.period_ms))
+        .expect("non-empty");
+    Some(working_glyph(fastest.period_ms, fastest.phase, false))
 }
 
 fn status_icon(
