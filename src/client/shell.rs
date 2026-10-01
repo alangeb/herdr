@@ -179,8 +179,8 @@ pub(crate) const SPINNER_FRAMES: [&str; 8] =
     ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧"];
 /// Shape garnish: at crawl speed the spin fades to this sparse set, so slow
 /// differs from fast in shape as well as tempo.
-pub(crate) const SPARSE_FRAMES: [&str; 4] = ["⠁", "⠂", "⠄", "⠈"];
-pub(crate) const STALL_FRAMES: [&str; 2] = ["⠐", "⠐⠂"];
+pub(crate) const SPARSE_FRAMES: [&str; 8] = ["⠁", "⠈", "⠐", "⠠", "⢀", "⡀", "⠄", "⠂"];
+pub(crate) const STALL_FRAMES: [&str; 2] = ["⠐", "⠒"];
 pub(crate) const STALL_ORANGE: ratatui::style::Color =
     ratatui::style::Color::Rgb(254, 165, 0);
 

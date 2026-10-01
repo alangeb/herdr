@@ -25,6 +25,7 @@ pub(crate) struct ClientShellConfig {
     pub(super) agents: crate::config::AgentsSidebarConfig,
     pub(super) agent_panel_sort: crate::config::AgentPanelSortConfig,
     pub(super) status_indicators: crate::config::StatusIndicatorStyle,
+    pub(super) agent_finished_bell: bool,
     pub(super) sound_enabled: bool,
     pub(super) toast_delivery: crate::config::ToastDelivery,
     pub(super) toast_delay_seconds: u64,
@@ -1897,6 +1898,20 @@ impl ClientShellState {
         }
         if !spinners || working_rows.is_empty() {
             let visible = anim.last_key.take().is_some();
+            if self.config.agent_finished_bell {
+                let n = anim
+                    .by_workspace
+                    .iter()
+                    .filter(|(k, _)| working_rows.iter().any(|w| w == *k))
+                    .count();
+                let vanished = anim.by_workspace.len().saturating_sub(n);
+                if vanished > 0 {
+                    let _ = crate::terminal_effects::write_terminal_bells(
+                        &mut std::io::stdout(),
+                        u16::try_from(vanished.min(3)).unwrap_or(3),
+                    );
+                }
+            }
             anim.by_workspace.clear();
             anim.seq_base.clear();
             anim.last_tick = None;
@@ -1956,6 +1971,19 @@ impl ClientShellState {
                 (entry.phase.floor() as usize) % super::SPINNER_FRAMES.len(),
                 (entry.pulse_phase.floor() as usize) % super::STALL_FRAMES.len(),
             ));
+        }
+        if self.config.agent_finished_bell {
+            let vanished = anim
+                .by_workspace
+                .keys()
+                .filter(|k| !working_rows.iter().any(|w| w == *k))
+                .count();
+            if vanished > 0 {
+                let _ = crate::terminal_effects::write_terminal_bells(
+                    &mut std::io::stdout(),
+                    u16::try_from(vanished.min(3)).unwrap_or(3),
+                );
+            }
         }
         anim.by_workspace
             .retain(|workspace_id, _| working_rows.iter().any(|w| w == workspace_id));
