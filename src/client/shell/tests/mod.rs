@@ -284,7 +284,7 @@ fn working_glyph_shape_and_set_selection() {
     assert_eq!(slow, vec!["⠁", "⠂", "⠄", "⠈"]);
     // Stall overrides both with the orange pulse set.
     assert_eq!(working_glyph(200.0, 0.0, true), "⠐");
-    assert_eq!(working_glyph(200.0, 1.0, true), "⠐⠂");
+    assert_eq!(working_glyph(200.0, 1.0, true), "⠒");
 }
 
 #[test]

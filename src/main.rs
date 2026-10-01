@@ -339,6 +339,7 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # status_indicators = "dots"
 
 # Accent color for highlights, borders, and navigation UI.
+# agent_finished_bell = true  # terminal bell when an agent stops working
 # Accepts: hex (#89b4fa), named colors (cyan, blue, magenta), or rgb(r,g,b)
 # accent = "cyan"
 

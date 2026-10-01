@@ -971,6 +971,10 @@ pub struct UiConfig {
     _legacy_agent_panel_scope: Option<LegacyAgentPanelScopeConfig>,
     /// Agent status indicator style. Saved values are "dots" or "symbols". Default: "dots".
     pub status_indicators: StatusIndicatorStyle,
+    /// Ring the terminal bell once when an agent stops working
+    /// (working -> idle/blocked/done edge). Default on.
+    #[serde(default = "default_true_ui")]
+    pub agent_finished_bell: bool,
     /// Expanded sidebar row composition.
     pub sidebar: SidebarConfig,
     /// Accent color for highlights, borders, and navigation UI.
@@ -1165,6 +1169,10 @@ impl Default for WorktreesConfig {
     }
 }
 
+fn default_true_ui() -> bool {
+    true
+}
+
 impl Default for UiConfig {
     fn default() -> Self {
         Self {
@@ -1196,6 +1204,7 @@ impl Default for UiConfig {
             agent_panel_sort: AgentPanelSortConfig::Spaces,
             _legacy_agent_panel_scope: None,
             status_indicators: StatusIndicatorStyle::Dots,
+            agent_finished_bell: true,
             sidebar: SidebarConfig::default(),
             accent: "cyan".into(),
             toast: ToastConfig::default(),
