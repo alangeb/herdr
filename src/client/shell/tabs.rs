@@ -1,4 +1,5 @@
 use super::*;
+use crate::protocol::ClientShellTabStatusSegment;
 
 const TAB_SCROLL_BUTTON_WIDTH: u16 = 3;
 const MIN_TAB_STRIP_WIDTH: u16 =
@@ -12,6 +13,7 @@ pub(crate) fn render_tab_bar(
     tab_scroll: &mut usize,
     reveal_focused_tab: &mut bool,
     tab_drag_insert_index: Option<usize>,
+    endpoint_monitor_segment: Option<&ClientShellTabStatusSegment>,
     hits: &mut ShellHitMap,
 ) {
     let palette = &config.palette;
@@ -28,7 +30,7 @@ pub(crate) fn render_tab_bar(
             display_width(&label).saturating_add(4).max(MIN_TAB_WIDTH)
         })
         .collect::<Vec<_>>();
-    let content = tab_bar_content_area(snapshot, area);
+    let content = tab_bar_content_area(snapshot, area, endpoint_monitor_segment);
     let mouse_chrome = config.mouse_capture;
     let new_tab_width = if mouse_chrome { NEW_TAB_WIDTH } else { 0 };
     let desired_total = desired_widths
@@ -220,22 +222,35 @@ pub(crate) fn render_tab_bar(
             );
         }
     }
-    render_tab_bar_status(buffer, area, snapshot, palette);
+    render_tab_bar_status(buffer, area, snapshot, palette, endpoint_monitor_segment);
 }
 
-pub(crate) fn tab_bar_status_width(snapshot: &ClientShellSnapshot) -> u16 {
+pub(crate) fn tab_bar_status_width(
+    snapshot: &ClientShellSnapshot,
+    endpoint_monitor_segment: Option<&ClientShellTabStatusSegment>,
+) -> u16 {
     let content = snapshot.tab_bar_right.iter().fold(0u16, |width, segment| {
         width.saturating_add(display_width(&segment.text))
     });
     let separators = snapshot.tab_bar_right.len().saturating_sub(1);
-    content.saturating_add(
-        display_width(&snapshot.tab_bar_right_separator)
-            .saturating_mul(separators.min(u16::MAX as usize) as u16),
-    )
+    let separator_width = display_width(&snapshot.tab_bar_right_separator);
+    let mut width = content
+        .saturating_add(separator_width.saturating_mul(separators.min(u16::MAX as usize) as u16));
+    if let Some(segment) = endpoint_monitor_segment {
+        if width > 0 {
+            width = width.saturating_add(separator_width);
+        }
+        width = width.saturating_add(display_width(&segment.text));
+    }
+    width
 }
 
-fn tab_bar_status_area(snapshot: &ClientShellSnapshot, area: Rect) -> Option<Rect> {
-    let width = tab_bar_status_width(snapshot);
+fn tab_bar_status_area(
+    snapshot: &ClientShellSnapshot,
+    area: Rect,
+    endpoint_monitor_segment: Option<&ClientShellTabStatusSegment>,
+) -> Option<Rect> {
+    let width = tab_bar_status_width(snapshot, endpoint_monitor_segment);
     if width == 0 {
         return None;
     }
@@ -244,8 +259,12 @@ fn tab_bar_status_area(snapshot: &ClientShellSnapshot, area: Rect) -> Option<Rec
         .then(|| Rect::new(area.right().saturating_sub(width), area.y, width, 1))
 }
 
-fn tab_bar_content_area(snapshot: &ClientShellSnapshot, area: Rect) -> Rect {
-    let reserved = tab_bar_status_area(snapshot, area)
+fn tab_bar_content_area(
+    snapshot: &ClientShellSnapshot,
+    area: Rect,
+    endpoint_monitor_segment: Option<&ClientShellTabStatusSegment>,
+) -> Rect {
+    let reserved = tab_bar_status_area(snapshot, area, endpoint_monitor_segment)
         .map(|status| status.width.saturating_add(1))
         .unwrap_or(0);
     Rect {
@@ -259,8 +278,9 @@ fn render_tab_bar_status(
     area: Rect,
     snapshot: &ClientShellSnapshot,
     palette: &Palette,
+    endpoint_monitor_segment: Option<&ClientShellTabStatusSegment>,
 ) {
-    let Some(status) = tab_bar_status_area(snapshot, area) else {
+    let Some(status) = tab_bar_status_area(snapshot, area, endpoint_monitor_segment) else {
         return;
     };
     let separator_width = display_width(&snapshot.tab_bar_right_separator);
@@ -288,6 +308,29 @@ fn render_tab_bar_status(
         };
         put_text(buffer, x, area.y, width, &segment.text, style);
         x = x.saturating_add(width);
+    }
+    if let Some(segment) = endpoint_monitor_segment {
+        if !snapshot.tab_bar_right.is_empty() && separator_width > 0 {
+            put_text(
+                buffer,
+                x,
+                area.y,
+                separator_width,
+                &snapshot.tab_bar_right_separator,
+                Style::default().fg(palette.overlay0).bg(palette.panel_bg),
+            );
+            x = x.saturating_add(separator_width);
+        }
+        let width = display_width(&segment.text);
+        let style = if segment.accent {
+            Style::default()
+                .fg(panel_contrast_fg(palette))
+                .bg(palette.accent)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(palette.overlay1).bg(palette.panel_bg)
+        };
+        put_text(buffer, x, area.y, width, &segment.text, style);
     }
 }
 

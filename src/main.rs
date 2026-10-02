@@ -508,7 +508,7 @@ fn finish_cli(outcome: io::Result<cli::CommandOutcome>) -> io::Result<()> {
 }
 
 fn main() -> io::Result<()> {
-    let raw_args: Vec<String> = match args_as_utf8(std::env::args_os()) {
+    let mut raw_args: Vec<String> = match args_as_utf8(std::env::args_os()) {
         Ok(args) => args,
         Err(err) => {
             eprintln!("error: {err}");
@@ -516,6 +516,12 @@ fn main() -> io::Result<()> {
             std::process::exit(2);
         }
     };
+    if let Err(err) = client::endpoint_monitor::parse_and_strip(&mut raw_args) {
+        eprintln!("error: {err}");
+        eprintln!("run 'herdr --help' for usage");
+        std::process::exit(2);
+    }
+
     if let Some(outcome) = cli::maybe_run_machine(&raw_args) {
         return finish_cli(outcome);
     }

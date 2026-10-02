@@ -1,4 +1,5 @@
 use super::*;
+use crate::protocol::ClientShellTabStatusSegment;
 
 #[path = "../shell/overlays.rs"]
 mod overlays;
@@ -256,6 +257,7 @@ pub(super) fn render_shell(
     snapshot: &ClientShellSnapshot,
     config: &ClientShellConfig,
     mut state: ShellRenderState<'_>,
+    endpoint_monitor_segment: Option<&ClientShellTabStatusSegment>,
 ) -> ShellHitMap {
     let mut hits = ShellHitMap::default();
     if layout.mobile_header.height > 0 {
@@ -318,6 +320,7 @@ pub(super) fn render_shell(
             state.tab_scroll,
             state.reveal_focused_tab,
             state.tab_drag_insert_index,
+            endpoint_monitor_segment,
             &mut hits,
         );
     }

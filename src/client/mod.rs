@@ -21,6 +21,7 @@ mod config_reload;
 mod direct_graphics;
 pub(crate) mod endpoint;
 mod endpoint_commands;
+pub(crate) mod endpoint_monitor;
 mod errors;
 mod events;
 mod frame_output;
@@ -146,6 +147,7 @@ fn run_client_with_mode(
     log_message: &'static str,
 ) -> io::Result<()> {
     init_logging();
+    endpoint_monitor::ensure_started();
 
     let loaded_config = crate::config::Config::load();
     // Windows may not have virtual terminal processing enabled until the rendered
@@ -2146,7 +2148,8 @@ async fn run_client_loop(
                             | shell.tick_copy_feedback(now)
                             | shell.tick_workspace_highlight(now)
                             | shell.tick_endpoint_error(now)
-                            | shell.tick_status_animation(now);
+                            | shell.tick_status_animation(now)
+                            | shell.tick_endpoint_monitor(now);
                         let frame = outcome
                             .repaint
                             .then(|| shell.compose(state.reported_size.0, state.reported_size.1))

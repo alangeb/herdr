@@ -230,6 +230,7 @@ impl ClientShellState {
                 dragged_workspace_id,
                 workspace_drop_indicator_row,
             },
+            self.endpoint_monitor_segment.as_ref(),
         );
         self.hits.panes = surface
             .panes

@@ -848,6 +848,7 @@ pub(crate) struct ClientShellState {
     pub(super) machine_diagnostics: super::machine_diagnostics::MachineDiagnostics,
     pub(super) config: ClientShellConfig,
     pub(super) snapshot: Option<Box<ClientShellSnapshot>>,
+    pub(super) endpoint_monitor_segment: Option<crate::protocol::ClientShellTabStatusSegment>,
     pub(super) active_snapshot_generation: Option<u64>,
     pub(super) pane_surface_generation: Option<u64>,
     pub(super) pane_surface: Option<PaneSurfaceFrame>,
@@ -1014,6 +1015,7 @@ impl ClientShellState {
             machine_diagnostics: Default::default(),
             config,
             snapshot: None,
+            endpoint_monitor_segment: None,
             active_snapshot_generation: None,
             pane_surface_generation: None,
             pane_surface: None,
@@ -1399,7 +1401,11 @@ impl ClientShellState {
                             || left.label != right.label
                             || left.zoomed != right.zoomed
                     })
-                || render::tab_bar_status_width(current) != render::tab_bar_status_width(&snapshot)
+                || render::tab_bar_status_width(current, self.endpoint_monitor_segment.as_ref())
+                    != render::tab_bar_status_width(
+                        &snapshot,
+                        self.endpoint_monitor_segment.as_ref(),
+                    )
         });
         if self
             .snapshot
@@ -1859,6 +1865,16 @@ impl ClientShellState {
 
     /// Attributes a pane-surface patch to the workspace that owns the
     /// currently visible pane (the only one streaming content to us).
+    pub(crate) fn tick_endpoint_monitor(&mut self, _now: std::time::Instant) -> bool {
+        let next = super::super::endpoint_monitor::segment();
+        if self.endpoint_monitor_segment == next {
+            false
+        } else {
+            self.endpoint_monitor_segment = next;
+            true
+        }
+    }
+
     pub(crate) fn tick_status_animation(&mut self, now: std::time::Instant) -> bool {
         use crate::api::schema::AgentStatus;
         let Ok(mut anim) = super::spinner_anim().write() else {

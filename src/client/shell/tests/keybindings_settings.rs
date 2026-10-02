@@ -165,6 +165,31 @@ fn tab_bar_renders_endpoint_status_ellipses_and_clamps_to_useful_scroll() {
 }
 
 #[test]
+fn endpoint_monitor_segment_right_aligns_in_tab_bar() {
+    let mut projected = snapshot();
+    projected.tab_bar_right = vec![crate::protocol::ClientShellTabStatusSegment {
+        text: "host".into(),
+        accent: false,
+    }];
+    projected.tab_bar_right_separator = " | ".into();
+    let mut config = ClientShellConfig::from_config(&Config::default());
+    config.mobile_width_threshold = 0;
+    let mut state = ClientShellState::new(config);
+    state.endpoint_monitor_segment = Some(crate::protocol::ClientShellTabStatusSegment {
+        text: "s0:·".into(),
+        accent: false,
+    });
+    state.set_snapshot(Box::new(projected));
+    state.set_pane_surface(surface());
+    let frame = state.compose(80, 20).expect("monitor fits");
+    let top = frame.cells[..frame.width as usize]
+        .iter()
+        .map(|cell| cell.symbol.as_str())
+        .collect::<String>();
+    assert!(top.ends_with("s0:·"));
+}
+
+#[test]
 fn inactive_auto_named_tab_label_does_not_stack_terminal_faint() {
     let mut projected = snapshot();
     projected.tabs.push(ClientShellTab {
