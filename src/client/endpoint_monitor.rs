@@ -422,17 +422,49 @@ fn cache_percent(samples: &VecDeque<Sample>) -> Option<u8> {
         let mut computed = 0.0f64;
         let mut queries = 0.0f64;
         let mut hits = 0.0f64;
+        let mut have_cached = false;
+        let mut have_computed = false;
+        let mut have_queries = false;
+        let mut have_hits = false;
         for pair in samples.iter().zip(samples.iter().skip(1)) {
-            cached += counter_delta(pair.0.cached, pair.1.cached);
-            computed += counter_delta(pair.0.pre, pair.1.pre);
-            queries += counter_delta(pair.0.queries, pair.1.queries);
-            hits += counter_delta(pair.0.hits, pair.1.hits);
+            if let (Some(old), Some(cur)) = (pair.0.cached, pair.1.cached) {
+                cached += counter_delta(Some(old), Some(cur));
+                have_cached = true;
+            }
+            if let (Some(old), Some(cur)) = (pair.0.pre, pair.1.pre) {
+                computed += counter_delta(Some(old), Some(cur));
+                have_computed = true;
+            }
+            if let (Some(old), Some(cur)) = (pair.0.queries, pair.1.queries) {
+                queries += counter_delta(Some(old), Some(cur));
+                have_queries = true;
+            }
+            if let (Some(old), Some(cur)) = (pair.0.hits, pair.1.hits) {
+                hits += counter_delta(Some(old), Some(cur));
+                have_hits = true;
+            }
         }
-        if cached + computed > 0.0 {
+        if have_cached && have_computed && cached + computed > 0.0 {
             return Some((cached / (cached + computed) * 100.0).clamp(0.0, 100.0) as u8);
         }
-        if queries > 0.0 {
+        if have_queries && have_hits && queries > 0.0 {
             return Some((hits / queries * 100.0).clamp(0.0, 100.0) as u8);
+        }
+    }
+    if let Some(last) = samples.back() {
+        if let (Some(cached), Some(computed)) = (last.cached, last.pre) {
+            if cached + computed > 0 {
+                let cached = cached as f64;
+                let computed = computed as f64;
+                return Some((cached / (cached + computed) * 100.0).clamp(0.0, 100.0) as u8);
+            }
+        }
+        if let (Some(queries), Some(hits)) = (last.queries, last.hits) {
+            if queries > 0 {
+                let queries = queries as f64;
+                let hits = hits as f64;
+                return Some((hits / queries * 100.0).clamp(0.0, 100.0) as u8);
+            }
         }
     }
     samples.back().and_then(|s| s.cache_rate).map(usage_pct)
@@ -539,6 +571,10 @@ fn split_top_level(body: &str) -> Vec<String> {
 
 fn source_is(s: &HashMap<String, String>, want: &[&str]) -> bool {
     s.get("source").is_some_and(|v| want.contains(&v.as_str()))
+}
+
+fn mode_is(s: &HashMap<String, String>, want: &[&str]) -> bool {
+    s.get("mode").is_some_and(|v| want.contains(&v.as_str()))
 }
 
 fn kind_is(s: &HashMap<String, String>, want: &str) -> bool {
@@ -673,25 +709,32 @@ fn sglang_snapshot(m: &[MetricSample]) -> Snapshot {
         pre: first_sum(
             m,
             &[
-                "sglang:prefill_tokens_total",
-                "sglang:prompt_compute_tokens_total",
                 "sglang:prefill_effective_tokens_total",
-                "sglang_prefill_tokens_total",
-                "sglang_prompt_compute_tokens_total",
                 "sglang_prefill_effective_tokens_total",
+                "sglang:prefill_tokens_total",
+                "sglang_prefill_tokens_total",
+                "sglang:prompt_compute_tokens_total",
+                "sglang_prompt_compute_tokens_total",
             ],
-            |_| true,
+            |labels| {
+                mode_is(labels, &["input"])
+                    || source_is(labels, &["local_compute"])
+                    || (!labels.contains_key("mode") && !labels.contains_key("source"))
+            },
         ),
         cached: first_sum(
             m,
             &[
-                "sglang:cache_hit_tokens_total",
-                "sglang:prompt_cache_hit_tokens_total",
+                "sglang:cached_tokens_total",
                 "sglang_cached_tokens_total",
+                "sglang:cache_hit_tokens_total",
                 "sglang_cache_hit_tokens_total",
+                "sglang:prompt_cache_hit_tokens_total",
                 "sglang_prompt_cache_hit_tokens_total",
+                "sglang:prefill_effective_tokens_total",
+                "sglang_prefill_effective_tokens_total",
             ],
-            |_| true,
+            |labels| !mode_is(labels, &["input"]) && !source_is(labels, &["local_compute"]),
         ),
         queries: None,
         hits: None,
@@ -780,6 +823,31 @@ mod tests {
         assert_eq!(s.pre, Some(100));
         assert_eq!(s.cached, Some(400));
         assert_eq!(s.kv, Some(0.32));
+    }
+
+    #[test]
+    fn parses_sglang_colon_metrics_with_labels() {
+        let text = "sglang:cached_tokens_total{cache_source=\"device\"} 300\nsglang:cached_tokens_total{cache_source=\"host\"} 100\nsglang:prefill_effective_tokens_total{mode=\"input\"} 100\nsglang:prefill_effective_tokens_total{mode=\"device_hit\"} 300\nsglang:prefill_effective_tokens_total{mode=\"host_hit\"} 100\n";
+        let s = snapshot_from_text(text).unwrap();
+        assert_eq!(s.pre, Some(100));
+        assert_eq!(s.cached, Some(400));
+    }
+
+    #[test]
+    fn cache_percent_uses_sglang_lifetime_counters_when_window_has_one_sample() {
+        let mut samples = VecDeque::new();
+        samples.push_back(Sample {
+            when: Instant::now(),
+            gen: None,
+            gen_now: None,
+            pre: Some(100),
+            cached: Some(1900),
+            queries: None,
+            hits: None,
+            cache_rate: Some(0.0),
+            kv: None,
+        });
+        assert_eq!(cache_percent(&samples), Some(95));
     }
 
     #[test]
