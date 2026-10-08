@@ -669,14 +669,10 @@ fn ds4_snapshot(m: &[MetricSample]) -> Snapshot {
 }
 
 fn llamacpp_snapshot(m: &[MetricSample]) -> Snapshot {
-    let prompt_total = sum(m, "llamacpp:prompt_tokens_total", |_| true);
+    // llama.cpp's prompt_tokens_total excludes cached tokens: cached activity is
+    // reported separately in prompt_tokens_cached_total.
+    let pre = sum(m, "llamacpp:prompt_tokens_total", |_| true);
     let cached = sum(m, "llamacpp:prompt_tokens_cached_total", |_| true);
-    let pre = match (prompt_total, cached) {
-        (Some(total), Some(cached)) => Some(total.saturating_sub(cached)),
-        (Some(total), None) => Some(total),
-        (None, Some(cached)) => Some(cached),
-        (None, None) => None,
-    };
     let cache_rate = match (pre, cached) {
         (Some(computed), Some(cached)) if computed + cached > 0 => {
             Some(cached as f64 / (computed + cached) as f64 * 100.0)
@@ -893,7 +889,7 @@ mod tests {
         assert_eq!(s.queue, Some(0));
         assert_eq!(s.gen, Some(7091));
         assert_eq!(s.gen_now, Some(0.0));
-        assert_eq!(s.pre, Some(216684));
+        assert_eq!(s.pre, Some(435259));
         assert_eq!(s.cached, Some(218575));
     }
 
