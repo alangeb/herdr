@@ -445,10 +445,10 @@ fn cache_percent(samples: &VecDeque<Sample>) -> Option<u8> {
             }
         }
         if have_cached && have_computed && cached + computed > 0.0 {
-            return Some((cached / (cached + computed) * 100.0).clamp(0.0, 100.0) as u8);
+            return Some(usage_pct(cached / (cached + computed) * 100.0));
         }
         if have_queries && have_hits && queries > 0.0 {
-            return Some((hits / queries * 100.0).clamp(0.0, 100.0) as u8);
+            return Some(usage_pct(hits / queries * 100.0));
         }
     }
     if let Some(last) = samples.back() {
@@ -456,14 +456,14 @@ fn cache_percent(samples: &VecDeque<Sample>) -> Option<u8> {
             if cached + computed > 0 {
                 let cached = cached as f64;
                 let computed = computed as f64;
-                return Some((cached / (cached + computed) * 100.0).clamp(0.0, 100.0) as u8);
+                return Some(usage_pct(cached / (cached + computed) * 100.0));
             }
         }
         if let (Some(queries), Some(hits)) = (last.queries, last.hits) {
             if queries > 0 {
                 let queries = queries as f64;
                 let hits = hits as f64;
-                return Some((hits / queries * 100.0).clamp(0.0, 100.0) as u8);
+                return Some(usage_pct(hits / queries * 100.0));
             }
         }
     }
@@ -493,6 +493,11 @@ fn snapshot_from_text(text: &str) -> Option<Snapshot> {
         .any(|m| m.name.starts_with("sglang:") || m.name.starts_with("sglang_"))
     {
         Some(sglang_snapshot(&metrics))
+    } else if metrics
+        .iter()
+        .any(|m| m.name.starts_with("llamacpp:") || m.name.starts_with("llamacpp_"))
+    {
+        Some(llamacpp_snapshot(&metrics))
     } else {
         None
     }
@@ -659,6 +664,36 @@ fn ds4_snapshot(m: &[MetricSample]) -> Snapshot {
         queries: None,
         hits: None,
         cache_rate: None,
+        kv: None,
+    }
+}
+
+fn llamacpp_snapshot(m: &[MetricSample]) -> Snapshot {
+    let prompt_total = sum(m, "llamacpp:prompt_tokens_total", |_| true);
+    let cached = sum(m, "llamacpp:prompt_tokens_cached_total", |_| true);
+    let pre = match (prompt_total, cached) {
+        (Some(total), Some(cached)) => Some(total.saturating_sub(cached)),
+        (Some(total), None) => Some(total),
+        (None, Some(cached)) => Some(cached),
+        (None, None) => None,
+    };
+    let cache_rate = match (pre, cached) {
+        (Some(computed), Some(cached)) if computed + cached > 0 => {
+            Some(cached as f64 / (computed + cached) as f64 * 100.0)
+        }
+        _ => None,
+    };
+
+    Snapshot {
+        streams: sum(m, "llamacpp:requests_processing", |_| true),
+        queue: sum(m, "llamacpp:requests_deferred", |_| true),
+        gen: sum(m, "llamacpp:tokens_predicted_total", |_| true),
+        gen_now: max(m, "llamacpp:predicted_tokens_seconds"),
+        pre,
+        cached,
+        queries: None,
+        hits: None,
+        cache_rate,
         kv: None,
     }
 }
@@ -848,6 +883,46 @@ mod tests {
             kv: None,
         });
         assert_eq!(cache_percent(&samples), Some(95));
+    }
+
+    #[test]
+    fn parses_llamacpp_metrics() {
+        let text = "llamacpp:prompt_tokens_total 435259\nllamacpp:prompt_tokens_cached_total 218575\nllamacpp:tokens_predicted_total 7091\nllamacpp:predicted_tokens_seconds 0\nllamacpp:requests_processing 1\nllamacpp:requests_deferred 0\n";
+        let s = snapshot_from_text(text).unwrap();
+        assert_eq!(s.streams, Some(1));
+        assert_eq!(s.queue, Some(0));
+        assert_eq!(s.gen, Some(7091));
+        assert_eq!(s.gen_now, Some(0.0));
+        assert_eq!(s.pre, Some(216684));
+        assert_eq!(s.cached, Some(218575));
+    }
+
+    #[test]
+    fn cache_percent_uses_llamacpp_cached_and_computed_counter_window() {
+        let mut samples = VecDeque::new();
+        samples.push_back(Sample {
+            when: Instant::now(),
+            gen: None,
+            gen_now: None,
+            pre: Some(1000),
+            cached: Some(1000),
+            queries: None,
+            hits: None,
+            cache_rate: None,
+            kv: None,
+        });
+        samples.push_back(Sample {
+            when: Instant::now(),
+            gen: None,
+            gen_now: None,
+            pre: Some(1500),
+            cached: Some(4000),
+            queries: None,
+            hits: None,
+            cache_rate: None,
+            kv: None,
+        });
+        assert_eq!(cache_percent(&samples), Some(86));
     }
 
     #[test]
