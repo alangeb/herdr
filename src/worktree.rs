@@ -313,12 +313,124 @@ pub(crate) fn run_worktree_add_command(
     base: &str,
     trust_repository: bool,
 ) -> Result<(), String> {
-    let command = if local_branch_exists(repo_root, branch, trust_repository)? {
-        build_worktree_add_existing_branch_command(repo_root, path, branch, trust_repository)
-    } else {
+    let is_new_branch = !local_branch_exists(repo_root, branch, trust_repository)?;
+    let command = if is_new_branch {
         build_worktree_add_new_branch_command(repo_root, path, branch, base, trust_repository)
+    } else {
+        build_worktree_add_existing_branch_command(repo_root, path, branch, trust_repository)
     };
-    run_worktree_command(&command)
+    run_worktree_command(&command)?;
+
+    if is_new_branch {
+        if let Some(upstream_branch) =
+            resolve_local_upstream_target(repo_root, base, trust_repository)
+        {
+            // Best effort: worktree creation should succeed even when a local
+            // tracking hint cannot be written because of an unexpected Git
+            // config failure.
+            let _ = configure_local_branch_upstream(
+                repo_root,
+                branch,
+                &upstream_branch,
+                trust_repository,
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn git_output(
+    repo_root: &Path,
+    args: &[&str],
+    trust_repository: bool,
+) -> Result<std::process::Output, String> {
+    repository_git_command(repo_root, trust_repository)
+        .args(args)
+        .output()
+        .map_err(|err| err.to_string())
+}
+
+fn resolve_local_upstream_target(
+    repo_root: &Path,
+    base: &str,
+    trust_repository: bool,
+) -> Option<String> {
+    let base = base.trim();
+    if base.is_empty() {
+        return None;
+    }
+
+    let candidate = if base == "HEAD" || base == "@" || base == "@{0}" {
+        let output = git_output(
+            repo_root,
+            &["symbolic-ref", "--quiet", "--short", "HEAD"],
+            trust_repository,
+        )
+        .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        String::from_utf8_lossy(&output.stdout).trim().to_owned()
+    } else if let Some(branch) = base.strip_prefix("refs/heads/") {
+        branch.to_owned()
+    } else {
+        let output = git_output(
+            repo_root,
+            &["rev-parse", "--symbolic-full-name", base],
+            trust_repository,
+        )
+        .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let full = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        full.strip_prefix("refs/heads/")?.to_owned()
+    };
+
+    if candidate.is_empty() || candidate == "HEAD" {
+        return None;
+    }
+
+    local_branch_exists(repo_root, &candidate, trust_repository)
+        .ok()?
+        .then_some(candidate)
+}
+
+fn configure_local_branch_upstream(
+    repo_root: &Path,
+    branch: &str,
+    upstream_branch: &str,
+    trust_repository: bool,
+) -> Result<(), String> {
+    let remote_key = format!("branch.{branch}.remote");
+    let existing = git_output(
+        repo_root,
+        &["config", "--get", &remote_key],
+        trust_repository,
+    )?;
+    if existing.status.success() && !String::from_utf8_lossy(&existing.stdout).trim().is_empty() {
+        return Ok(());
+    }
+
+    for args in [
+        vec!["config", "--local", &remote_key, "."],
+        vec![
+            "config",
+            "--local",
+            &format!("branch.{branch}.merge"),
+            &format!("refs/heads/{upstream_branch}"),
+        ],
+    ] {
+        let output = git_output(repo_root, &args, trust_repository)?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+            return Err(if stderr.is_empty() { stdout } else { stderr });
+        }
+    }
+
+    Ok(())
 }
 
 pub(crate) fn run_worktree_command(command: &WorktreeCommand) -> Result<(), String> {
@@ -937,6 +1049,92 @@ prunable stale
 
         std::fs::remove_dir_all(repo).unwrap();
         std::fs::remove_dir_all(submodule).unwrap();
+    }
+
+    fn git_stdout(repo: &Path, args: &[&str]) -> String {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git command failed: git -C {} {}",
+            repo.display(),
+            args.join(" ")
+        );
+        String::from_utf8_lossy(&output.stdout).trim().to_owned()
+    }
+
+    #[test]
+    fn new_worktree_branch_tracks_local_source_branch() {
+        let repo = create_committed_repo("worktree-local-upstream-repo");
+        let checkout = unique_temp_path("worktree-local-upstream-checkout");
+        let branch = "worktree/local-upstream";
+        let source_branch = git_stdout(&repo, &["branch", "--show-current"]);
+
+        run_worktree_add_command(&repo, &checkout, branch, "HEAD", false).unwrap();
+
+        assert_eq!(git_stdout(&checkout, &["branch", "--show-current"]), branch);
+        assert_eq!(
+            git_stdout(
+                &repo,
+                &["config", "--get", &format!("branch.{branch}.remote")]
+            ),
+            "."
+        );
+        assert_eq!(
+            git_stdout(
+                &repo,
+                &["config", "--get", &format!("branch.{branch}.merge")]
+            ),
+            format!("refs/heads/{source_branch}")
+        );
+
+        let remove = build_worktree_remove_command(&repo, &checkout, false, false);
+        run_worktree_command(&remove).unwrap();
+        assert!(!checkout.exists());
+        let _ = std::fs::remove_dir_all(repo);
+    }
+
+    #[test]
+    fn existing_worktree_branch_does_not_replace_existing_upstream() {
+        let repo = create_committed_repo("worktree-existing-upstream-repo");
+        let checkout = unique_temp_path("worktree-existing-upstream-checkout");
+        let branch = "worktree/existing-upstream";
+        let source_branch = git_stdout(&repo, &["branch", "--show-current"]);
+
+        run_git(&repo, &["branch", branch]);
+        run_git(
+            &repo,
+            &["config", "--local", &format!("branch.{branch}.remote"), "."],
+        );
+        run_git(
+            &repo,
+            &[
+                "config",
+                "--local",
+                &format!("branch.{branch}.merge"),
+                &format!("refs/heads/{source_branch}"),
+            ],
+        );
+
+        run_worktree_add_command(&repo, &checkout, branch, "HEAD", false).unwrap();
+
+        assert_eq!(git_stdout(&checkout, &["branch", "--show-current"]), branch);
+        assert_eq!(
+            git_stdout(
+                &repo,
+                &["config", "--get", &format!("branch.{branch}.merge")]
+            ),
+            format!("refs/heads/{source_branch}")
+        );
+
+        let remove = build_worktree_remove_command(&repo, &checkout, false, false);
+        run_worktree_command(&remove).unwrap();
+        assert!(!checkout.exists());
+        let _ = std::fs::remove_dir_all(repo);
     }
 
     #[test]
