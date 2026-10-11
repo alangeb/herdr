@@ -107,7 +107,7 @@ fn grouped_worktrees_render_parent_branch_and_indented_child() {
         label: "repo-feature".into(),
         custom_label: false,
         branch: Some("worktree/feature".into()),
-        git_ahead_behind: None,
+        git_ahead_behind: Some((0, 6)),
         tokens: Vec::new(),
         worktree: Some(ClientShellWorktree {
             key: "repo".into(),
@@ -133,6 +133,7 @@ fn grouped_worktrees_render_parent_branch_and_indented_child() {
     assert!(text.contains("main"));
     assert!(text.contains("└─"));
     assert!(text.contains("feature"));
+    assert!(text.contains("↓6"));
 
     let mut replacement = (**state.snapshot.as_ref().expect("snapshot")).clone();
     replacement.revision = 2;

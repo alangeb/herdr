@@ -127,7 +127,8 @@ pub(crate) struct SpaceTokenContext<'a> {
     pub(crate) state_text: &'a str,
     pub(crate) ahead_behind: Option<(usize, usize)>,
     pub(crate) tokens: &'a std::collections::HashMap<String, String>,
-    pub(crate) suppress_git_details: bool,
+    pub(crate) suppress_branch: bool,
+    pub(crate) suppress_git_status: bool,
 }
 
 pub(crate) fn space_rows(
@@ -150,11 +151,11 @@ pub(crate) fn space_rows(
                         SpaceSidebarToken::Workspace => {
                             Some(ResolvedTokenKind::Workspace(context.workspace.to_string()))
                         }
-                        SpaceSidebarToken::Branch if !context.suppress_git_details => context
+                        SpaceSidebarToken::Branch if !context.suppress_branch => context
                             .branch
                             .map(|branch| ResolvedTokenKind::Branch(branch.to_string())),
                         SpaceSidebarToken::Branch => None,
-                        SpaceSidebarToken::GitStatus if !context.suppress_git_details => context
+                        SpaceSidebarToken::GitStatus if !context.suppress_git_status => context
                             .ahead_behind
                             .filter(|(ahead, behind)| *ahead > 0 || *behind > 0)
                             .map(|(ahead, behind)| ResolvedTokenKind::GitStatus { ahead, behind }),
@@ -330,7 +331,8 @@ rows = [[{ token = "$load", rules = [{ lt = 50, dim = true }] }]]
                     branch: None,
                     state_text: "working",
                     ahead_behind: None,
-                    suppress_git_details: false,
+                    suppress_branch: false,
+                    suppress_git_status: false,
                     tokens: &entry.tokens,
                 },
             );
@@ -379,7 +381,8 @@ rows = [[{ token = "$load", rules = [{ lt = 50, hide = true }] }], ["workspace"]
                     branch: None,
                     state_text: "working",
                     ahead_behind: None,
-                    suppress_git_details: false,
+                    suppress_branch: false,
+                    suppress_git_status: false,
                     tokens: &entry.tokens,
                 },
             );
@@ -537,7 +540,7 @@ rows = [[{ token = "$load", rules = [{ lt = 50, hide = true }] }], ["workspace"]
     }
 
     #[test]
-    fn grouped_children_suppress_all_builtin_git_details() {
+    fn grouped_children_suppress_duplicate_branch_details_but_keep_git_status() {
         let config = SpacesSidebarConfig::default();
 
         assert_eq!(
@@ -549,13 +552,20 @@ rows = [[{ token = "$load", rules = [{ lt = 50, hide = true }] }], ["workspace"]
                     state_text: "idle",
                     ahead_behind: Some((2, 1)),
                     tokens: &std::collections::HashMap::new(),
-                    suppress_git_details: true,
+                    suppress_branch: true,
+                    suppress_git_status: false,
                 },
             ),
-            vec![vec![
-                ResolvedToken::unstyled(ResolvedTokenKind::StateIcon),
-                ResolvedToken::unstyled(ResolvedTokenKind::Workspace("feature".into())),
-            ]]
+            vec![
+                vec![
+                    ResolvedToken::unstyled(ResolvedTokenKind::StateIcon),
+                    ResolvedToken::unstyled(ResolvedTokenKind::Workspace("feature".into())),
+                ],
+                vec![ResolvedToken::unstyled(ResolvedTokenKind::GitStatus {
+                    ahead: 2,
+                    behind: 1
+                })],
+            ]
         );
     }
 
@@ -576,7 +586,8 @@ rows = [[{ token = "$load", rules = [{ lt = 50, hide = true }] }], ["workspace"]
                     state_text: "idle",
                     ahead_behind: None,
                     tokens: &tokens,
-                    suppress_git_details: false,
+                    suppress_branch: false,
+                    suppress_git_status: false,
                 },
             ),
             vec![vec![ResolvedToken::unstyled(ResolvedTokenKind::Custom(
