@@ -129,13 +129,14 @@ pub(crate) struct SpaceTokenContext<'a> {
     pub(crate) tokens: &'a std::collections::HashMap<String, String>,
     pub(crate) suppress_branch: bool,
     pub(crate) suppress_git_status: bool,
+    pub(crate) inline_git_status_with_workspace: bool,
 }
 
 pub(crate) fn space_rows(
     config: &SpacesSidebarConfig,
     context: SpaceTokenContext<'_>,
 ) -> Vec<Vec<ResolvedToken>> {
-    config
+    let mut rows: Vec<Vec<ResolvedToken>> = config
         .rows
         .iter()
         .filter_map(|row| {
@@ -175,7 +176,44 @@ pub(crate) fn space_rows(
                 .collect::<Vec<_>>();
             (!resolved.is_empty()).then_some(resolved)
         })
-        .collect()
+        .collect();
+
+    if context.inline_git_status_with_workspace {
+        let Some(git_row) = rows.iter().position(|row| {
+            row.iter()
+                .any(|token| matches!(token.kind, ResolvedTokenKind::GitStatus { .. }))
+        }) else {
+            return rows;
+        };
+        let Some(target_row) = rows.iter().position(|row| {
+            row.iter()
+                .any(|token| matches!(token.kind, ResolvedTokenKind::Workspace(_)))
+        }) else {
+            return rows;
+        };
+
+        let Some(git_index) = rows[git_row]
+            .iter()
+            .position(|token| matches!(token.kind, ResolvedTokenKind::GitStatus { .. }))
+        else {
+            return rows;
+        };
+        let Some(workspace_index) = rows[target_row]
+            .iter()
+            .position(|token| matches!(token.kind, ResolvedTokenKind::Workspace(_)))
+        else {
+            return rows;
+        };
+
+        if git_row != target_row {
+            let git_token = rows[git_row].remove(git_index);
+            rows[target_row].insert(workspace_index + 1, git_token);
+        }
+
+        rows.retain(|row| !row.is_empty());
+    }
+
+    rows
 }
 
 pub(crate) fn separator(previous: &ResolvedToken, current: &ResolvedToken) -> &'static str {
@@ -333,6 +371,7 @@ rows = [[{ token = "$load", rules = [{ lt = 50, dim = true }] }]]
                     ahead_behind: None,
                     suppress_branch: false,
                     suppress_git_status: false,
+                    inline_git_status_with_workspace: false,
                     tokens: &entry.tokens,
                 },
             );
@@ -383,6 +422,7 @@ rows = [[{ token = "$load", rules = [{ lt = 50, hide = true }] }], ["workspace"]
                     ahead_behind: None,
                     suppress_branch: false,
                     suppress_git_status: false,
+                    inline_git_status_with_workspace: false,
                     tokens: &entry.tokens,
                 },
             );
@@ -554,18 +594,17 @@ rows = [[{ token = "$load", rules = [{ lt = 50, hide = true }] }], ["workspace"]
                     tokens: &std::collections::HashMap::new(),
                     suppress_branch: true,
                     suppress_git_status: false,
+                    inline_git_status_with_workspace: true,
                 },
             ),
-            vec![
-                vec![
-                    ResolvedToken::unstyled(ResolvedTokenKind::StateIcon),
-                    ResolvedToken::unstyled(ResolvedTokenKind::Workspace("feature".into())),
-                ],
-                vec![ResolvedToken::unstyled(ResolvedTokenKind::GitStatus {
+            vec![vec![
+                ResolvedToken::unstyled(ResolvedTokenKind::StateIcon),
+                ResolvedToken::unstyled(ResolvedTokenKind::Workspace("feature".into())),
+                ResolvedToken::unstyled(ResolvedTokenKind::GitStatus {
                     ahead: 2,
                     behind: 1
-                })],
-            ]
+                }),
+            ]]
         );
     }
 
@@ -588,6 +627,7 @@ rows = [[{ token = "$load", rules = [{ lt = 50, hide = true }] }], ["workspace"]
                     tokens: &tokens,
                     suppress_branch: false,
                     suppress_git_status: false,
+                    inline_git_status_with_workspace: false,
                 },
             ),
             vec![vec![ResolvedToken::unstyled(ResolvedTokenKind::Custom(

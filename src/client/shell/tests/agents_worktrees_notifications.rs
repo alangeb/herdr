@@ -134,6 +134,9 @@ fn grouped_worktrees_render_parent_branch_and_indented_child() {
     assert!(text.contains("└─"));
     assert!(text.contains("feature"));
     assert!(text.contains("↓6"));
+    assert!(text
+        .lines()
+        .any(|line| line.contains("feature") && line.contains("↓6")));
 
     let mut replacement = (**state.snapshot.as_ref().expect("snapshot")).clone();
     replacement.revision = 2;

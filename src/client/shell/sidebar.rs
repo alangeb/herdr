@@ -658,6 +658,7 @@ pub(in crate::client::shell) fn workspace_rows(
             tokens: &token_values,
             suppress_branch: indented,
             suppress_git_status: false,
+            inline_git_status_with_workspace: indented,
         },
     )
 }
