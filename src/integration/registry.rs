@@ -543,7 +543,7 @@ pub(crate) fn experimental_taurlm_integration_status(
     })
 }
 
-const TAU_INTEGRATION_VERSION: u32 = 1;
+const TAU_INTEGRATION_VERSION: u32 = 2;
 
 pub(crate) fn parse_integration_version(content: &str) -> Option<u32> {
     content.lines().find_map(|line| {

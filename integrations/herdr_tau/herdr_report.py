@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# HERDR_INTEGRATION_VERSION=1
+# HERDR_INTEGRATION_VERSION=2
 import json, os, re, shlex, shutil, socket, subprocess, sys, time
 from pathlib import Path
 
