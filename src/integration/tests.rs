@@ -4740,3 +4740,109 @@ fn grok_dir_honors_grok_home_after_config_dir_seam() {
     clear_integration_path_env();
     let _ = fs::remove_dir_all(base);
 }
+
+// ── Tau launcher self-naming (tau procidentity2 Slice 4, REQ-HUS-001/003) ───
+//
+// The tau wrapper is the supervisor of a long-lived agent process. If its comm
+// stays "python3", an OOM killer configured with --prefer matches the supervisor
+// before the memory hog it supervises, and the supervisor's own handler then
+// tears down the agent. The exemption is an --avoid pattern keyed on the exact
+// comm, so the name is a contract with the operator's configuration.
+//
+// These assert on the EMBEDDED asset (`include_str!`), not on a file on disk:
+// the install path writes exactly this string, so a fresh
+// `herdr integration install tau` must produce a self-naming wrapper.
+
+const TAU_WRAPPER_ASSET: &str = include_str!("../../integrations/herdr_tau/herdr_wrapper.py");
+
+#[test]
+fn tau_wrapper_asset_self_names_the_supervisor() {
+    // REQ-HUS-001: the block must be present in the shipped template, in all
+    // three load-bearing parts. Each is asserted separately so a partial edit
+    // says which one went missing.
+    assert!(
+        TAU_WRAPPER_ASSET.contains("import ctypes"),
+        "self-naming needs ctypes; without it the prctl call cannot be reached"
+    );
+    assert!(
+        TAU_WRAPPER_ASSET.contains("prctl(15,"),
+        "15 is PR_SET_NAME; a different number names nothing"
+    );
+    assert!(
+        TAU_WRAPPER_ASSET.contains("[:"),
+        "comm is 16 bytes including the NUL; an unclamped name is truncated by \
+         the kernel at a byte boundary, not by us"
+    );
+    // Best-effort: the block must sit inside a try that swallows, or a machine
+    // without libc.so.6 could not launch tau at all.
+    let block = TAU_WRAPPER_ASSET
+        .split("try:")
+        .nth(1)
+        .and_then(|rest| rest.split("prctl").next())
+        .unwrap_or_default();
+    assert!(
+        TAU_WRAPPER_ASSET.contains("except Exception:") && !block.is_empty(),
+        "the prctl block must be best-effort, never fatal to the launch"
+    );
+}
+
+#[test]
+fn tau_wrapper_self_names_with_the_labels_the_operator_exempted() {
+    // REQ-HUS-003: byte-identical to the labels tau's procname validator accepts
+    // and earlyoom's --avoid matches. A divergent name (tau_launcher, herdr-tau)
+    // looks fixed upstream and re-opens the incident downstream.
+    for label in ["tau-launcher", "taurlm-launcher"] {
+        assert!(
+            TAU_WRAPPER_ASSET.contains(label),
+            "the wrapper must name the supervisor {label:?} exactly"
+        );
+        assert!(
+            label.len() <= 15,
+            "{label:?} is {} bytes; comm holds 15 plus the NUL",
+            label.len()
+        );
+    }
+    // The name is derived from agent_label, so both entries come from one site.
+    assert!(
+        TAU_WRAPPER_ASSET.contains("%s-launcher"),
+        "both launchers must share one naming site, not two hand-written strings"
+    );
+}
+
+#[test]
+fn every_tau_integration_asset_agrees_on_the_version() {
+    // REQ-HUS-002: v3 carries the self-name. An install whose marker says 2 is a
+    // pre-fix install and must report stale, not current. Parity is pinned for
+    // every marker because the v2 bump touched seven files; a bump that misses a
+    // marker leaves one install disagreeing with itself.
+    for (name, asset) in [
+        (
+            "tau-herdr",
+            include_str!("../../integrations/herdr_tau/tau-herdr"),
+        ),
+        (
+            "taurlm-herdr",
+            include_str!("../../integrations/herdr_tau/taurlm-herdr"),
+        ),
+        (
+            "tau_entry.py",
+            include_str!("../../integrations/herdr_tau/tau_entry.py"),
+        ),
+        (
+            "taurlm_entry.py",
+            include_str!("../../integrations/herdr_tau/taurlm_entry.py"),
+        ),
+        (
+            "herdr_report.py",
+            include_str!("../../integrations/herdr_tau/herdr_report.py"),
+        ),
+        ("herdr_wrapper.py", TAU_WRAPPER_ASSET),
+    ] {
+        assert_eq!(
+            parse_integration_version(asset),
+            Some(TAU_INTEGRATION_VERSION),
+            "{name} marker disagrees with TAU_INTEGRATION_VERSION"
+        );
+    }
+    assert_eq!(TAU_INTEGRATION_VERSION, 3, "v3 is the self-naming wrapper");
+}
