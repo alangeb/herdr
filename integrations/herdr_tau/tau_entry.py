@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # HERDR_INTEGRATION_ID=tau
-# HERDR_INTEGRATION_VERSION=2
+# HERDR_INTEGRATION_VERSION=3
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import herdr_wrapper

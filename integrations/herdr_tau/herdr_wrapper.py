@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# HERDR_INTEGRATION_VERSION=2
-import os, signal, subprocess, sys, threading, time
+# HERDR_INTEGRATION_VERSION=3
+import ctypes, os, signal, subprocess, sys, threading, time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -122,6 +122,21 @@ def run_cmd(source, cmd, cwd, agent_label="tau", launch_cwd=None):
 
 def main(source, env_root, fallbacks, agent_label=None):
     agent_label = agent_label or source
+    # Name this process after the agent it supervises, before anything is spawned.
+    # comm stays "python3" otherwise, which is what an OOM killer's --prefer pattern
+    # matches: the supervisor dies before the memory hog it is supervising, and its
+    # own signal handler then SIGTERMs the agent. --avoid patterns key on exactly
+    # "tau-launcher" / "taurlm-launcher", so the name is a contract, not a label.
+    # Best-effort by design: a naming failure must never cost the launch it protects,
+    # and this runs before the repo is located, so it cannot import agent-side code.
+    # comm is 16 bytes including the NUL, hence the 15-byte clamp.
+    try:
+        _nm = ("%s-launcher" % agent_label).encode("utf-8")[:15]
+        if _nm and b"\0" not in _nm:
+            _libc = ctypes.CDLL("libc.so.6", use_errno=True)
+            _libc.prctl(15, ctypes.c_char_p(_nm + b"\x00"), 0, 0, 0)
+    except Exception:
+        pass
     os.environ.setdefault("HERDR_AGENT", agent_label)
     if (os.environ.get("HERDR_TAU_TEST_CHILD") or "").lower() in {"1", "true", "yes", "on"}:
         return run_cmd(source, [agent_label, "-c", "print('herdr-wrapper-test-child')"], Path.cwd(), agent_label=agent_label)
