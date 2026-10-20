@@ -33,6 +33,7 @@ visible_blocker = true
 regex = ['(?i)\b(answer\[.ready.\]\s*=\s*True|confirm|awaiting\s+(user|human)|input\s+required)\b']
 not = [
   { line_regex = ['(?i)\b(working|running|executing|processing|detecting)\b'] },
+  { line_regex = ['^\s*(?:\$|rlm\[[0-9]+\]>>+|>{2,})(?:\s.*)?$'] },
 ]
 
 [[rules]]
@@ -70,7 +71,15 @@ state = "idle"
 priority = 80
 region = "bottom_non_empty_lines(4)"
 visible_idle = true
-line_regex = ['(?i)^\s*(?:\$|rlm\[.*\]>>+|>{2,})\s*$']
+line_regex = ['(?i)^\s*(?:\$|rlm\[[0-9]+\]>>+|>{2,})(?:\s.*)?$']
+
+[[rules]]
+id = "working_bottom_output"
+state = "working"
+priority = 60
+region = "bottom_non_empty_lines(8)"
+visible_working = true
+line_regex = ['\S']
 
 [[rules]]
 id = "no_live_state_evidence"

@@ -345,8 +345,6 @@ pub(crate) fn full_lifecycle_hook_authority(source: &str, agent_label: &str) -> 
             | ("herdr:opencode", "opencode")
             | ("herdr:kilo", "kilo")
             | ("herdr:kimi", "kimi")
-            | ("herdr:tau", "tau")
-            | ("herdr:taurlm", "taurlm")
     )
 }
 
@@ -357,6 +355,8 @@ pub(crate) fn session_identity_only_integration(source: &str, agent_label: &str)
             | ("herdr:qwen", "qwen")
             | ("herdr:letta", "letta")
             | ("herdr:antigravity_cli", "agy")
+            | ("herdr:tau", "tau")
+            | ("herdr:taurlm", "taurlm")
     )
 }
 
@@ -1075,6 +1075,8 @@ mod tests {
             ("herdr:qwen", "qwen", Agent::Qwen),
             ("herdr:letta", "letta", Agent::Letta),
             ("herdr:antigravity_cli", "agy", Agent::Antigravity),
+            ("herdr:tau", "tau", Agent::Tau),
+            ("herdr:taurlm", "taurlm", Agent::TauRlm),
         ] {
             assert!(!full_lifecycle_hook_authority(source, label));
             assert!(session_identity_only_integration(source, label));
@@ -1096,6 +1098,10 @@ mod tests {
             detect_state(Some(Agent::Tau), "answer delivered\n>>>"),
             AgentState::Idle
         );
+        assert_eq!(
+            detect_state(Some(Agent::Tau), "answer delivered\n>>> confirm this"),
+            AgentState::Idle
+        );
         assert_eq!(manifest::explain(Agent::Tau, "").state, AgentState::Unknown);
     }
 
@@ -1112,6 +1118,14 @@ mod tests {
         assert_eq!(
             detect_state(Some(Agent::TauRlm), "rlm[1]>>>"),
             AgentState::Idle
+        );
+        assert_eq!(
+            detect_state(Some(Agent::TauRlm), "rlm[1]>>> confirm this"),
+            AgentState::Idle
+        );
+        assert_eq!(
+            detect_state(Some(Agent::TauRlm), "streaming output without prompt"),
+            AgentState::Working
         );
         assert_eq!(
             manifest::explain(Agent::TauRlm, "").state,

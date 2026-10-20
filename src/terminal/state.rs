@@ -2461,6 +2461,8 @@ mod tests {
         for (agent, source, label, session_id) in [
             (Agent::Codex, "herdr:codex", "codex", "codex-session"),
             (Agent::Devin, "herdr:devin", "devin", "devin-session"),
+            (Agent::Tau, "herdr:tau", "tau", "tau-session"),
+            (Agent::TauRlm, "herdr:taurlm", "taurlm", "taurlm-session"),
         ] {
             let mut terminal = test_terminal();
             terminal.set_detected_state(Some(agent), AgentState::Idle);

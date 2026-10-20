@@ -109,6 +109,8 @@ pub fn is_reserved_native_state_source(source: &str, agent: &str) -> bool {
             | ("herdr:qwen", "qwen")
             | ("herdr:cursor", "cursor")
             | ("herdr:grok", "grok")
+            | ("herdr:tau", "tau")
+            | ("herdr:taurlm", "taurlm")
     )
 }
 
@@ -316,6 +318,8 @@ mod tests {
         assert!(is_reserved_native_state_source("herdr:claude", "claude"));
         assert!(is_reserved_native_state_source("herdr:codex", "codex"));
         assert!(is_reserved_native_state_source("herdr:devin", "devin"));
+        assert!(is_reserved_native_state_source("herdr:tau", "tau"));
+        assert!(is_reserved_native_state_source("herdr:taurlm", "taurlm"));
         assert!(!is_reserved_native_state_source("herdr:kimi", "kimi"));
         assert!(!is_reserved_native_state_source(
             "herdr:opencode",

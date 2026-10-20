@@ -20,6 +20,9 @@ any = [
   { contains = ["awaiting approval"] },
   { contains = ["eot confirmation"] },
 ]
+not = [
+  { line_regex = ['^\s*(?:\$|>{2,})(?:\s.*)?$'] },
+]
 
 [[rules]]
 id = "blocked_input_request"
@@ -28,6 +31,9 @@ priority = 1100
 region = "bottom_non_empty_lines(15)"
 visible_blocker = true
 regex = ['(?i)\b(please\s+(provide|confirm|approve|enter|respond)|input\s+required|awaiting\s+user|waiting\s+for\s+(user|input))\b']
+not = [
+  { line_regex = ['^\s*(?:\$|>{2,})(?:\s.*)?$'] },
+]
 
 [[rules]]
 id = "working_executing"
@@ -56,7 +62,15 @@ state = "idle"
 priority = 80
 region = "bottom_non_empty_lines(4)"
 visible_idle = true
-line_regex = ['^\s*(?:\$|>{2,})\s*$']
+line_regex = ['^\s*(?:\$|>{2,})(?:\s.*)?$']
+
+[[rules]]
+id = "working_bottom_output"
+state = "working"
+priority = 60
+region = "bottom_non_empty_lines(8)"
+visible_working = true
+line_regex = ['\S']
 
 [[rules]]
 id = "no_live_state_evidence"
