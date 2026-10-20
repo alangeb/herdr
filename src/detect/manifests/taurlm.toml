@@ -1,12 +1,13 @@
 id = "taurlm"
-version = "2025.07.10.1"
+version = "2025.07.10.2"
 min_engine_version = 1
 updated_at = "2025-07-10T00:00:00Z"
 aliases = ["taurlm", "tau-rlm"]
 
-# TauRLM agent detection. TauRLM runs inside a tmux pane and communicates
-# through the REPL protocol. Screen patterns match its REPL feedback chrome,
-# code fence markers, and metadata prefixes.
+# TauRLM is screen-state authoritative. TauRLM's lifecycle hooks are session
+# identity only: they can carry A2A session id/metadata, but they must not own
+# the pane dot. TauRLM's idle prompt is `rlm[ctx]>>>` or `>>>` with optional
+# suffix; active turns append `[RUNNING]`.
 
 [[rules]]
 id = "osc_progress_blocked"
@@ -17,23 +18,25 @@ visible_blocker = true
 regex = ['^4;3(?:;|$)']
 
 [[rules]]
-id = "osc_title_blocked"
-state = "blocked"
-priority = 1300
-region = "osc_title"
-visible_blocker = true
-regex = ['(?i)\b(needs\s+(input|confirmation|approval)|blocked|awaiting)\b']
+id = "prompt_running_taurlm"
+state = "working"
+priority = 1050
+region = "bottom_non_empty_lines(3)"
+visible_working = true
+line_regex = ['(?i)^\s*(?:\$|rlm\[[0-9]+\]>{2,})\s+\[RUNNING\](?:\s.*)?$']
 
 [[rules]]
-id = "blocked_repl_prompt"
+id = "blocked_input_request"
 state = "blocked"
-priority = 1100
-region = "bottom_non_empty_lines(15)"
+priority = 1000
+region = "bottom_non_empty_lines(5)"
 visible_blocker = true
-regex = ['(?i)\b(answer\[.ready.\]\s*=\s*True|confirm|awaiting\s+(user|human)|input\s+required)\b']
+regex = [
+  '(?i)\b(awaiting user input|waiting for user input|waiting for input|input required|needs (input|confirmation|approval))\b',
+]
 not = [
-  { line_regex = ['(?i)\b(working|running|executing|processing|detecting)\b'] },
-  { line_regex = ['^\s*(?:\$|rlm\[[0-9]+\]>>+|>{2,})(?:\s.*)?$'] },
+  { line_regex = ['^\s*[|]'] },
+  { line_regex = ['(?i)^\s*(?:\$|rlm\[[0-9]+\]>>+|>{2,})(?:\s.*)?$'] },
 ]
 
 [[rules]]
@@ -55,23 +58,12 @@ line_regex = [
 ]
 
 [[rules]]
-id = "idle_answer_delivered"
+id = "idle_prompt_taurlm"
 state = "idle"
-priority = 100
-region = "bottom_non_empty_lines(8)"
+priority = 90
+region = "bottom_non_empty_lines(3)"
 visible_idle = true
-line_regex = ['(?i)^(?:answer\[.content.\]|answer\[.ready.\]\s*=\s*True|Done|Complete|Answer:)']
-not = [
-  { line_regex = ['(?i)\b(working|running|executing|processing)\b'] },
-]
-
-[[rules]]
-id = "idle_prompt_ready"
-state = "idle"
-priority = 80
-region = "bottom_non_empty_lines(4)"
-visible_idle = true
-line_regex = ['(?i)^\s*(?:\$|rlm\[[0-9]+\]>>+|>{2,})(?:\s.*)?$']
+line_regex = ['(?i)^\s*(?:\$|rlm\[[0-9]+\]>{2,}|>{2,})(?:\s.*)?$']
 
 [[rules]]
 id = "working_bottom_output"

@@ -1102,6 +1102,14 @@ mod tests {
             detect_state(Some(Agent::Tau), "answer delivered\n>>> confirm this"),
             AgentState::Idle
         );
+        assert_eq!(
+            detect_state(Some(Agent::Tau), "output\n>>> [RUNNING] "),
+            AgentState::Working
+        );
+        assert_eq!(
+            detect_state(Some(Agent::Tau), "Double-call confirmation required"),
+            AgentState::Blocked
+        );
         assert_eq!(manifest::explain(Agent::Tau, "").state, AgentState::Unknown);
     }
 
@@ -1122,6 +1130,10 @@ mod tests {
         assert_eq!(
             detect_state(Some(Agent::TauRlm), "rlm[1]>>> confirm this"),
             AgentState::Idle
+        );
+        assert_eq!(
+            detect_state(Some(Agent::TauRlm), "rlm[1]>>> [RUNNING] "),
+            AgentState::Working
         );
         assert_eq!(
             detect_state(Some(Agent::TauRlm), "streaming output without prompt"),

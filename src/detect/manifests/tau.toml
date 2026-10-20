@@ -1,68 +1,43 @@
 id = "tau"
-version = "2025.07.10.1"
+version = "2025.07.10.2"
 min_engine_version = 1
 updated_at = "2025-07-10T00:00:00Z"
 aliases = ["tau", "tauergon", "tau-ergon"]
 
-# Tau agent detection via REPL feedback chrome and EOT answer patterns.
-# Tau presents answers after setting answer['ready']=True and shows a
-# prompt between turns. Working state is indicated by active code execution.
+# Tau is screen-state authoritative. The Tau/TauRLM integration may publish a
+# session id for resume identity, but it must not drive the Herdr pane state.
+# Tau's prompt is `>>>`; an active turn appends `[RUNNING]`, and typed suffix
+# text is still an idle prompt waiting for the next operator turn.
 
 [[rules]]
-id = "blocked_confirmation"
-state = "blocked"
-priority = 1200
-region = "bottom_non_empty_lines(15)"
-visible_blocker = true
-any = [
-  { contains = ["confirm"] },
-  { contains = ["approve"] },
-  { contains = ["awaiting approval"] },
-  { contains = ["eot confirmation"] },
-]
-not = [
-  { line_regex = ['^\s*(?:\$|>{2,})(?:\s.*)?$'] },
-]
+id = "prompt_running_tau"
+state = "working"
+priority = 1050
+region = "bottom_non_empty_lines(3)"
+visible_working = true
+line_regex = ['(?i)^\s*>{2,}\s+\[RUNNING\](?:\s.*)?$']
 
 [[rules]]
 id = "blocked_input_request"
 state = "blocked"
 priority = 1100
-region = "bottom_non_empty_lines(15)"
+region = "bottom_non_empty_lines(5)"
 visible_blocker = true
-regex = ['(?i)\b(please\s+(provide|confirm|approve|enter|respond)|input\s+required|awaiting\s+user|waiting\s+for\s+(user|input))\b']
+regex = [
+  '(?i)\b(awaiting user input|waiting for user input|waiting for input|input required|double-call confirmation|path rejected|exact same call again|eot confirmation)\b',
+]
 not = [
+  { line_regex = ['^\s*[|]'] },
   { line_regex = ['^\s*(?:\$|>{2,})(?:\s.*)?$'] },
 ]
 
 [[rules]]
-id = "working_executing"
-state = "working"
-priority = 900
-region = "bottom_non_empty_lines(12)"
-visible_working = true
-line_regex = [
-  '(?i)^\s*(?:Running|Executing|Processing|Evaluating|\.\.\.\s*(?:executing|running|computing))\b.*$',
-]
-
-[[rules]]
-id = "idle_answer_presented"
+id = "idle_prompt_tau"
 state = "idle"
-priority = 100
-region = "bottom_non_empty_lines(8)"
+priority = 90
+region = "bottom_non_empty_lines(3)"
 visible_idle = true
-line_regex = ['(?i)^\s*(?:Done|Complete|Answer:|Result:)\s*$']
-not = [
-  { line_regex = ['(?i)\b(working|running|executing|processing)\b'] },
-]
-
-[[rules]]
-id = "idle_shell_prompt"
-state = "idle"
-priority = 80
-region = "bottom_non_empty_lines(4)"
-visible_idle = true
-line_regex = ['^\s*(?:\$|>{2,})(?:\s.*)?$']
+line_regex = ['(?i)^\s*(?:\$|>{2,})(?:\s.*)?$']
 
 [[rules]]
 id = "working_bottom_output"
