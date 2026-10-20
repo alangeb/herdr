@@ -5,6 +5,7 @@
 
 pub mod manifest;
 pub mod manifest_update;
+pub(crate) mod console_state;
 
 /// The detected state of a terminal pane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -126,6 +127,11 @@ impl Agent {
         Self::TauRlm,
     ];
 }
+
+#[allow(unused_imports)]
+pub use console_state::{ConsoleState, ConsoleClassification};
+#[allow(unused_imports)]
+pub use console_state::classify as classify_console_state;
 
 pub fn agent_label(agent: Agent) -> &'static str {
     match agent {
@@ -322,6 +328,10 @@ pub fn detect_agent_with_osc(
             visible_working: false,
         };
     };
+    // Tau/TauRlm use the pure-ANSI console-state detector, not manifests.
+    if matches!(agent, Agent::Tau | Agent::TauRlm) {
+        return console_state::detect_tau(agent, screen_content, None);
+    }
     manifest::detect_with_osc(
         agent,
         manifest::DetectionInput {
@@ -333,7 +343,11 @@ pub fn detect_agent_with_osc(
 }
 
 pub fn should_skip_state_update(agent: Option<Agent>, screen_content: &str) -> bool {
-    agent.is_some_and(|agent| manifest::should_skip_state_update(agent, screen_content))
+    match agent {
+        Some(a) if matches!(a, Agent::Tau | Agent::TauRlm) => false,
+        Some(a) => manifest::should_skip_state_update(a, screen_content),
+        None => false,
+    }
 }
 
 pub(crate) fn full_lifecycle_hook_authority(source: &str, agent_label: &str) -> bool {
@@ -1086,6 +1100,7 @@ mod tests {
 
     #[test]
     fn tau_manifest_detects_working_blocked_and_idle_chrome() {
+        // Console-state detector (replaces manifest for Tau):
         assert_eq!(
             detect_state(Some(Agent::Tau), "Running integration checks"),
             AgentState::Working
@@ -1102,6 +1117,8 @@ mod tests {
             detect_state(Some(Agent::Tau), "answer delivered\n>>> confirm this"),
             AgentState::Idle
         );
+        // >>> [RUNNING] is an active status indicator (agent_input.py sets it
+        // while turn_active) => Working dot, not idle.
         assert_eq!(
             detect_state(Some(Agent::Tau), "output\n>>> [RUNNING] "),
             AgentState::Working
@@ -1110,11 +1127,13 @@ mod tests {
             detect_state(Some(Agent::Tau), "Double-call confirmation required"),
             AgentState::Blocked
         );
+        // Manifest explain still works for diagnostic purposes
         assert_eq!(manifest::explain(Agent::Tau, "").state, AgentState::Unknown);
     }
 
     #[test]
     fn taurlm_manifest_detects_working_blocked_and_idle_chrome() {
+        // Console-state detector (replaces manifest for TauRlm):
         assert_eq!(
             detect_state(Some(Agent::TauRlm), "Running integration checks..."),
             AgentState::Working
@@ -1131,6 +1150,7 @@ mod tests {
             detect_state(Some(Agent::TauRlm), "rlm[1]>>> confirm this"),
             AgentState::Idle
         );
+        // rlm[1]>>> [RUNNING] is an active status indicator => Working dot.
         assert_eq!(
             detect_state(Some(Agent::TauRlm), "rlm[1]>>> [RUNNING] "),
             AgentState::Working

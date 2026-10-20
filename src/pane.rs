@@ -771,6 +771,7 @@ fn spawn_basic_detection_task(
         let mut last_screen_scan_detection_content_seq = None;
         let mut agent_startup_grace_until = None;
         let mut pending_idle = PendingIdleConfirmation::default();
+        let mut last_console_metadata: Option<(String, String, String)> = None;
 
         loop {
             let sleep_duration = if pending_idle.active() {
@@ -798,6 +799,7 @@ fn spawn_basic_detection_task(
                     last_detection_text.clear();
                     last_screen_scan_detection_content_seq = None;
                     agent_startup_grace_until = None;
+                    last_console_metadata = None;
                     pending_idle.clear();
                 }
             }
@@ -957,11 +959,26 @@ fn spawn_basic_detection_task(
                 DetectionScreenReadDecision::Skip => continue,
             }
 
-            let content = terminal.detection_text();
+            let quiet_age_secs =
+                last_content_change_at.map(|last_change| now.duration_since(last_change).as_secs_f64());
+            let console_classification = if matches!(agent, Some(Agent::Tau | Agent::TauRlm)) {
+                let raw = terminal.visible_ansi();
+                let cls = crate::detect::console_state::classify(&raw, quiet_age_secs);
+                Some((raw, cls))
+            } else {
+                None
+            };
+            let content = console_classification
+                .as_ref()
+                .map(|(raw, _)| raw.clone())
+                .unwrap_or_else(|| terminal.detection_text());
             last_screen_scan_detection_content_seq = current_detection_content_seq;
             let content_changed = content != last_detection_text;
             last_detection_text.clone_from(&content);
-            if !process_exited && crate::detect::should_skip_state_update(agent, &content) {
+            if !process_exited
+                && console_classification.is_none()
+                && crate::detect::should_skip_state_update(agent, &content)
+            {
                 pending_idle.clear();
                 continue;
             }
@@ -977,13 +994,24 @@ fn spawn_basic_detection_task(
 
             let osc_title = terminal.agent_osc_title();
             let osc_progress = terminal.agent_osc_progress();
-            let Some(screen_detection) = detection_update_for_publish_with_osc(
-                agent,
-                &content,
-                &osc_title,
-                &osc_progress,
-                process_exited,
-            ) else {
+            let console_detection = match (process_exited, console_classification.as_ref(), agent) {
+                (false, Some(_), Some(agent)) => Some(crate::detect::console_state::detect_tau(
+                    agent,
+                    &content,
+                    quiet_age_secs,
+                )),
+                (true, Some(_), _) => Some(crate::detect::AgentDetection {
+                    state: AgentState::Idle,
+                    skip_state_update: false,
+                    visible_idle: true,
+                    visible_blocker: false,
+                    visible_working: false,
+                }),
+                _ => None,
+            };
+            let Some(screen_detection) = console_detection.or_else(|| {
+                detection_update_for_publish_with_osc(agent, &content, &osc_title, &osc_progress, process_exited)
+            }) else {
                 pending_idle.clear();
                 continue;
             };
@@ -1029,6 +1057,45 @@ fn spawn_basic_detection_task(
                         &mut foreground_shell_exit_reported,
                     )
                     .await;
+                    if let Some((_, cls)) = console_classification.as_ref() {
+                        if let Some(agent) = agent {
+                            let state = cls.state.label().to_string();
+                            let detail = cls.detail.clone();
+                            let prompt = cls.prompt.clone().unwrap_or_default();
+                            let metadata_key = (state.clone(), detail.clone(), prompt.clone());
+                            if last_console_metadata.as_ref() != Some(&metadata_key) {
+                                let mut state_labels = std::collections::HashMap::new();
+                                let dot_state = match cls.dot_state {
+                                    AgentState::Working => "working",
+                                    AgentState::Idle => "idle",
+                                    AgentState::Blocked => "blocked",
+                                    AgentState::Unknown => "unknown",
+                                };
+                                state_labels.insert(dot_state.to_string(), format!("{} {}", state, detail));
+                                state_labels.insert("tau-console-state".to_string(), state.clone());
+                                state_labels.insert("tau-console-detail".to_string(), detail.clone());
+                                state_labels.insert("tau-console-prompt".to_string(), prompt.clone());
+                                let event = AppEvent::HookMetadataReported {
+                                    pane_id,
+                                    source: format!("herdr:{}", crate::detect::agent_label(agent)),
+                                    agent_label: Some(crate::detect::agent_label(agent).to_string()),
+                                    applies_to_source: None,
+                                    title: None,
+                                    display_agent: None,
+                                    state_labels,
+                                    clear_title: false,
+                                    clear_display_agent: false,
+                                    clear_state_labels: false,
+                                    seq: None,
+                                    ttl: Some(std::time::Duration::from_secs(60)),
+                                };
+                                if let Err(err) = state_events.send(event).await {
+                                    warn!(pane = pane_id.raw(), err = %err, "failed to deliver Tau console-state metadata");
+                                }
+                                last_console_metadata = Some(metadata_key);
+                            }
+                        }
+                    }
                 }
             }
         }

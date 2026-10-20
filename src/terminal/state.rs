@@ -2584,6 +2584,44 @@ mod tests {
     }
 
     #[test]
+    fn tau_report_agent_working_does_not_mutate_dot_state() {
+        // Tau report-agent --state working must NOT set hook authority or change dot.
+        let mut terminal = test_terminal();
+        terminal.set_detected_state(Some(Agent::Tau), AgentState::Idle);
+
+        // Simulate report-agent --state working
+        let result = terminal.set_hook_authority_at(
+            "herdr:tau".to_string(),
+            "tau".to_string(),
+            AgentState::Working,
+            None,
+            None,
+            Some(1),
+            Instant::now(),
+        );
+        assert!(result.is_none(), "Tau report-agent --state should be ignored (session-identity-only)");
+        assert_eq!(terminal.state, AgentState::Idle);
+        assert!(terminal.hook_authority.is_none());
+    }
+
+    #[test]
+    fn taurlm_report_agent_session_updates_identity_only() {
+        let mut terminal = test_terminal();
+        terminal.set_detected_state(Some(Agent::TauRlm), AgentState::Working);
+
+        let mutation = terminal.set_agent_session_ref(
+            "herdr:taurlm".to_string(),
+            "taurlm".to_string(),
+            crate::agent_resume::AgentSessionRef::id("rlm-session-1"),
+            Some(5),
+        );
+        assert!(mutation.is_some(), "Session identity should be accepted");
+        assert!(terminal.hook_authority.is_none());
+        // Dot state must remain from screen detection, not lifecycle report
+        assert_eq!(terminal.state, AgentState::Working);
+    }
+
+    #[test]
     fn startup_session_claim_activates_full_lifecycle_integrations() {
         for (agent, source, label) in [
             (Agent::Kimi, "herdr:kimi", "kimi"),
