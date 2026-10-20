@@ -242,6 +242,20 @@ impl TerminalState {
                 .insert(snapshot.authority.source.clone(), sequence);
         }
         self.detected_agent = crate::detect::parse_agent_label(&snapshot.authority.agent_label);
+        if crate::detect::session_identity_only_integration(
+            &snapshot.authority.source,
+            &snapshot.authority.agent_label,
+        ) {
+            if let Some(session_ref) = snapshot.authority.session_ref {
+                self.persisted_agent_session = Some(crate::agent_resume::PersistedAgentSession {
+                    source: snapshot.authority.source.clone(),
+                    agent: snapshot.authority.agent_label.clone(),
+                    session_ref,
+                });
+            }
+            self.agent_process_acquisition_pending = snapshot.acquisition_pending;
+            return;
+        }
         self.state = snapshot.authority.state;
         self.hook_authority = Some(snapshot.authority);
         self.agent_process_acquisition_pending = snapshot.acquisition_pending;
@@ -1647,6 +1661,13 @@ impl TerminalState {
                 FullLifecycleHookSuppressionReason::HookClear,
             );
             self.hook_authority = None;
+        } else if crate::detect::session_identity_only_integration(&source, &agent_label) {
+            if self.hook_authority.as_ref().is_some_and(|authority| {
+                authority.source == source && authority.agent_label == agent_label
+            }) {
+                self.hook_authority = None;
+            }
+            self.suppressed_full_lifecycle_hook_reports.remove(&source);
         }
         self.reconcile_agent_name_owner(&agent_label, Some(&session_ref));
         let persisted_session = crate::agent_resume::PersistedAgentSession {
@@ -1860,6 +1881,10 @@ impl TerminalState {
     }
 
     fn hook_authority_is_effective(&self, authority: &HookAuthority) -> bool {
+        if crate::detect::session_identity_only_integration(&authority.source, &authority.agent_label)
+        {
+            return false;
+        }
         !crate::detect::full_lifecycle_hook_authority(&authority.source, &authority.agent_label)
             || crate::detect::parse_agent_label(&authority.agent_label).is_none_or(|agent| {
                 self.detected_agent == Some(agent) && self.recent_agent_process_exit.is_none()
@@ -2491,6 +2516,71 @@ mod tests {
 
             assert_eq!(terminal.state, AgentState::Working);
         }
+    }
+
+    #[test]
+    fn session_identity_only_hook_authority_is_not_effective() {
+        let mut terminal = test_terminal();
+        terminal.set_detected_state(Some(Agent::Tau), AgentState::Working);
+        terminal.set_hook_authority_at(
+            "herdr:tau".to_string(),
+            "tau".to_string(),
+            AgentState::Idle,
+            None,
+            Some(crate::agent_resume::AgentSessionRef::id("tau-session").unwrap()),
+            Some(1),
+            Instant::now(),
+        );
+        assert_eq!(terminal.state, AgentState::Working);
+    }
+
+    #[test]
+    fn session_identity_only_report_clears_stale_hook_authority() {
+        let mut terminal = test_terminal();
+        terminal.detected_agent = Some(Agent::Tau);
+        terminal.fallback_state = AgentState::Working;
+        terminal.state = AgentState::Idle;
+        terminal.hook_authority = Some(HookAuthority {
+            source: "herdr:tau".to_string(),
+            agent_label: "tau".to_string(),
+            state: AgentState::Idle,
+            message: None,
+            reported_at: Instant::now(),
+            session_ref: Some(crate::agent_resume::AgentSessionRef::id("tau-session").unwrap()),
+        });
+
+        let mutation = terminal
+            .set_agent_session_ref(
+                "herdr:tau".to_string(),
+                "tau".to_string(),
+                Some(crate::agent_resume::AgentSessionRef::id("tau-session").unwrap()),
+                Some(10),
+            )
+            .expect("session identity should be accepted");
+        assert!(terminal.hook_authority.is_none());
+        assert_eq!(terminal.state, AgentState::Working);
+        assert!(!mutation.session_ref_changed);
+    }
+
+    #[test]
+    fn session_identity_only_handoff_does_not_restore_lifecycle_state() {
+        let mut terminal = test_terminal();
+        terminal.restore_handoff_agent_state(HandoffAgentState {
+            authority: HookAuthority {
+                source: "herdr:tau".to_string(),
+                agent_label: "tau".to_string(),
+                state: AgentState::Idle,
+                message: None,
+                reported_at: Instant::now(),
+                session_ref: Some(crate::agent_resume::AgentSessionRef::id("tau-session").unwrap()),
+            },
+            sequence: Some(5),
+            acquisition_pending: false,
+        });
+
+        assert!(terminal.hook_authority.is_none());
+        assert_eq!(terminal.state, AgentState::Unknown);
+        assert!(terminal.persisted_agent_session.is_some());
     }
 
     #[test]
