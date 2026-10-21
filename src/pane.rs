@@ -2,18 +2,18 @@ use std::cell::Cell;
 use std::io;
 use std::path::Path;
 use std::sync::{
-    atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicU64, Ordering},
     Arc, Mutex, OnceLock,
+    atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicU64, Ordering},
 };
 
 use bytes::Bytes;
 use portable_pty::CommandBuilder;
 #[cfg(all(test, unix))]
-use portable_pty::{native_pty_system, PtySize};
-use ratatui::{layout::Rect, Frame};
+use portable_pty::{PtySize, native_pty_system};
+use ratatui::{Frame, layout::Rect};
 #[cfg(test)]
 use tokio::sync::watch;
-use tokio::sync::{mpsc, Notify};
+use tokio::sync::{Notify, mpsc};
 #[cfg(not(windows))]
 use tracing::debug;
 use tracing::{error, info, warn};
@@ -34,11 +34,11 @@ mod terminal;
 mod xtgettcap;
 
 use self::agent_detection::{
-    decide_detection_screen_read, decide_screen_detection_publish,
+    AGENT_PENDING_IDLE_RECHECK, AGENT_STARTUP_GRACE_WINDOW, DetectionPublishDecision,
+    DetectionScreenReadDecision, DetectionScreenReadInput, PendingIdleConfirmation,
+    ScreenDetectionPublishInput, decide_detection_screen_read, decide_screen_detection_publish,
     detection_update_for_publish_with_osc, mark_detection_content_changed,
-    observe_detection_content_change, DetectionPublishDecision, DetectionScreenReadDecision,
-    DetectionScreenReadInput, PendingIdleConfirmation, ScreenDetectionPublishInput,
-    AGENT_PENDING_IDLE_RECHECK, AGENT_STARTUP_GRACE_WINDOW,
+    observe_detection_content_change,
 };
 #[cfg(unix)]
 pub use self::terminal::InputState;
@@ -959,8 +959,8 @@ fn spawn_basic_detection_task(
                 DetectionScreenReadDecision::Skip => continue,
             }
 
-            let quiet_age_secs =
-                last_content_change_at.map(|last_change| now.duration_since(last_change).as_secs_f64());
+            let quiet_age_secs = last_content_change_at
+                .map(|last_change| now.duration_since(last_change).as_secs_f64());
             let console_classification = if matches!(agent, Some(Agent::Tau | Agent::TauRlm)) {
                 let raw = terminal.visible_ansi();
                 let cls = crate::detect::console_state::classify(&raw, quiet_age_secs);
@@ -994,27 +994,45 @@ fn spawn_basic_detection_task(
 
             let osc_title = terminal.agent_osc_title();
             let osc_progress = terminal.agent_osc_progress();
-            let console_detection = match (process_exited, console_classification.as_ref(), agent) {
-                (false, Some(_), Some(agent)) => Some(crate::detect::console_state::detect_tau(
+            let console_detection =
+                match (process_exited, console_classification.as_ref(), agent) {
+                    (false, Some(_), Some(agent)) => Some(
+                        crate::detect::console_state::detect_tau(agent, &content, quiet_age_secs),
+                    ),
+                    (true, Some(_), _) => Some(crate::detect::AgentDetection {
+                        state: AgentState::Idle,
+                        skip_state_update: false,
+                        visible_idle: true,
+                        visible_blocker: false,
+                        visible_working: false,
+                    }),
+                    _ => None,
+                };
+            let Some(screen_detection) = console_detection.or_else(|| {
+                detection_update_for_publish_with_osc(
                     agent,
                     &content,
-                    quiet_age_secs,
-                )),
-                (true, Some(_), _) => Some(crate::detect::AgentDetection {
-                    state: AgentState::Idle,
-                    skip_state_update: false,
-                    visible_idle: true,
-                    visible_blocker: false,
-                    visible_working: false,
-                }),
-                _ => None,
-            };
-            let Some(screen_detection) = console_detection.or_else(|| {
-                detection_update_for_publish_with_osc(agent, &content, &osc_title, &osc_progress, process_exited)
+                    &osc_title,
+                    &osc_progress,
+                    process_exited,
+                )
             }) else {
                 pending_idle.clear();
                 continue;
             };
+            let console_metadata_key = console_classification.as_ref().and_then(|(_, cls)| {
+                agent.map(|detected_agent| {
+                    (
+                        detected_agent,
+                        cls.clone(),
+                        (
+                            cls.state.label().to_string(),
+                            cls.detail.clone(),
+                            cls.prompt.clone().unwrap_or_default(),
+                        ),
+                    )
+                })
+            });
             match decide_screen_detection_publish(
                 ScreenDetectionPublishInput {
                     screen_detection,
@@ -1057,45 +1075,41 @@ fn spawn_basic_detection_task(
                         &mut foreground_shell_exit_reported,
                     )
                     .await;
-                    if let Some((_, cls)) = console_classification.as_ref() {
-                        if let Some(agent) = agent {
-                            let state = cls.state.label().to_string();
-                            let detail = cls.detail.clone();
-                            let prompt = cls.prompt.clone().unwrap_or_default();
-                            let metadata_key = (state.clone(), detail.clone(), prompt.clone());
-                            if last_console_metadata.as_ref() != Some(&metadata_key) {
-                                let mut state_labels = std::collections::HashMap::new();
-                                let dot_state = match cls.dot_state {
-                                    AgentState::Working => "working",
-                                    AgentState::Idle => "idle",
-                                    AgentState::Blocked => "blocked",
-                                    AgentState::Unknown => "unknown",
-                                };
-                                state_labels.insert(dot_state.to_string(), format!("{} {}", state, detail));
-                                state_labels.insert("tau-console-state".to_string(), state.clone());
-                                state_labels.insert("tau-console-detail".to_string(), detail.clone());
-                                state_labels.insert("tau-console-prompt".to_string(), prompt.clone());
-                                let event = AppEvent::HookMetadataReported {
-                                    pane_id,
-                                    source: format!("herdr:{}", crate::detect::agent_label(agent)),
-                                    agent_label: Some(crate::detect::agent_label(agent).to_string()),
-                                    applies_to_source: None,
-                                    title: None,
-                                    display_agent: None,
-                                    state_labels,
-                                    clear_title: false,
-                                    clear_display_agent: false,
-                                    clear_state_labels: false,
-                                    seq: None,
-                                    ttl: Some(std::time::Duration::from_secs(60)),
-                                };
-                                if let Err(err) = state_events.send(event).await {
-                                    warn!(pane = pane_id.raw(), err = %err, "failed to deliver Tau console-state metadata");
-                                }
-                                last_console_metadata = Some(metadata_key);
-                            }
-                        }
+                }
+            }
+            if let Some((detected_agent, cls, metadata_key)) = console_metadata_key {
+                if last_console_metadata.as_ref() != Some(&metadata_key) {
+                    let (state_label, detail, prompt) = metadata_key.clone();
+                    let mut state_labels = std::collections::HashMap::new();
+                    let dot_state = match cls.dot_state {
+                        AgentState::Working => "working",
+                        AgentState::Idle => "idle",
+                        AgentState::Blocked => "blocked",
+                        AgentState::Unknown => "unknown",
+                    };
+                    state_labels
+                        .insert(dot_state.to_string(), format!("{} {}", state_label, detail));
+                    state_labels.insert("tau-console-state".to_string(), state_label.clone());
+                    state_labels.insert("tau-console-detail".to_string(), detail.clone());
+                    state_labels.insert("tau-console-prompt".to_string(), prompt.clone());
+                    let event = AppEvent::HookMetadataReported {
+                        pane_id,
+                        source: format!("herdr:{}", crate::detect::agent_label(detected_agent)),
+                        agent_label: Some(crate::detect::agent_label(detected_agent).to_string()),
+                        applies_to_source: None,
+                        title: None,
+                        display_agent: None,
+                        state_labels,
+                        clear_title: false,
+                        clear_display_agent: false,
+                        clear_state_labels: false,
+                        seq: None,
+                        ttl: Some(std::time::Duration::from_secs(60)),
+                    };
+                    if let Err(err) = state_events.send(event).await {
+                        warn!(pane = pane_id.raw(), err = %err, "failed to deliver Tau console-state metadata");
                     }
+                    last_console_metadata = Some(metadata_key);
                 }
             }
         }
@@ -3854,15 +3868,19 @@ mod tests {
         runtime.clear_screen().unwrap();
         assert_eq!(runtime.visible_text(), before);
         runtime.test_process_pty_bytes(b"\x1b[?1049l");
-        assert!(runtime
-            .recent_unwrapped_text_snapshot(100)
-            .text
-            .contains("one"));
+        assert!(
+            runtime
+                .recent_unwrapped_text_snapshot(100)
+                .text
+                .contains("one")
+        );
         runtime.clear_screen().unwrap();
-        assert!(!runtime
-            .recent_unwrapped_text_snapshot(100)
-            .text
-            .contains("one"));
+        assert!(
+            !runtime
+                .recent_unwrapped_text_snapshot(100)
+                .text
+                .contains("one")
+        );
         assert!(runtime.visible_text().contains("five"));
     }
 

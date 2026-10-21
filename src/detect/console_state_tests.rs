@@ -88,25 +88,55 @@ fn blocked_permission() {
 
 #[test]
 fn blocked_not_in_diff() {
-    let lines = vec!["+// waiting for next packet", "- waiting code", "  more code"];
+    let lines = vec![
+        "+// waiting for next packet",
+        "- waiting code",
+        "  more code",
+    ];
     assert!(detect_blocked(&lines).is_none());
 }
 
-// ── error detection ──
+// ── error detection: visible red text only ──
 
 #[test]
-fn error_indicator() {
-    assert!(detect_error(&["ERROR: something failed"]).is_some());
+fn error_plain_word_error_is_not_error() {
+    assert!(detect_error("ERROR: ordinary prose containing the word error").is_none());
+    assert!(detect_error("state: error in unrelated tool output").is_none());
 }
 
 #[test]
-fn error_python_traceback() {
-    assert!(detect_error(&["Traceback (most recent call last):"]).is_some());
+fn error_bright_red_text_is_error() {
+    assert!(detect_error(&esc_pair("[91m", "boom", "[0m")).is_some());
 }
 
 #[test]
-fn error_rust_panic() {
-    assert!(detect_error(&["thread 'main' panicked at src/main.rs:1:1:"]).is_some());
+fn error_normal_red_text_is_error() {
+    assert!(detect_error(&esc_pair("[31m", "boom", "[0m")).is_some());
+}
+
+#[test]
+fn error_256_red_text_is_error() {
+    assert!(detect_error(&esc_pair("[38;5;9m", "boom", "[0m")).is_some());
+}
+
+#[test]
+fn error_truecolor_red_text_is_error() {
+    assert!(detect_error(&esc_pair("[38;2;218;78;78m", "boom", "[0m")).is_some());
+}
+
+#[test]
+fn error_red_spaces_only_is_not_error() {
+    assert!(detect_error(&esc_pair("[91m", "    ", "[0m")).is_none());
+}
+
+#[test]
+fn error_red_background_is_not_error() {
+    assert!(detect_error(&esc_pair("[41m", "boom", "[0m")).is_none());
+}
+
+#[test]
+fn error_orange_truecolor_is_not_error() {
+    assert!(detect_error(&esc_pair("[38;2;255;165;0m", "orange", "[0m")).is_none());
 }
 
 // ── state mapping ──
@@ -114,9 +144,18 @@ fn error_rust_panic() {
 #[test]
 fn state_mapping_to_dot() {
     assert_eq!(ConsoleState::Finished.to_agent_state(), AgentState::Idle);
-    assert_eq!(ConsoleState::WorkingSingle.to_agent_state(), AgentState::Working);
-    assert_eq!(ConsoleState::WorkingDouble.to_agent_state(), AgentState::Working);
-    assert_eq!(ConsoleState::Breathing.to_agent_state(), AgentState::Working);
+    assert_eq!(
+        ConsoleState::WorkingSingle.to_agent_state(),
+        AgentState::Working
+    );
+    assert_eq!(
+        ConsoleState::WorkingDouble.to_agent_state(),
+        AgentState::Working
+    );
+    assert_eq!(
+        ConsoleState::Breathing.to_agent_state(),
+        AgentState::Working
+    );
     assert_eq!(ConsoleState::Blocked.to_agent_state(), AgentState::Blocked);
     assert_eq!(ConsoleState::Error.to_agent_state(), AgentState::Unknown);
     assert_eq!(ConsoleState::Unknown.to_agent_state(), AgentState::Unknown);
@@ -126,7 +165,7 @@ fn state_mapping_to_dot() {
 
 #[test]
 fn classify_prompt_idle() {
-    let raw = format!("{}>>>{}"  , esc("[38;5;14m"), esc("[0m"));
+    let raw = format!("{}>>>{}", esc("[38;5;14m"), esc("[0m"));
     let cls = classify(&raw, Some(5.0));
     assert_eq!(cls.state, ConsoleState::Finished);
     assert_eq!(cls.dot_state, AgentState::Idle);
@@ -169,9 +208,11 @@ fn classify_statusbar_update_working() {
 
 #[test]
 fn classify_colored_content_working_double() {
-    let raw = format!("{}\n{}",
-            esc_pair("[32m", "test result: ok. 42 passed", "[0m"),
-            esc_pair("[31m", "1 failed", "[0m"));
+    let raw = format!(
+        "{}\n{}",
+        esc_pair("[32m", "test result: ok. 42 passed", "[0m"),
+        esc_pair("[93m", "1 warning", "[0m")
+    );
     let cls = classify(&raw, Some(0.5));
     assert_eq!(cls.state, ConsoleState::WorkingDouble);
 }
@@ -197,10 +238,11 @@ fn classify_blocked() {
 
 #[test]
 fn classify_error() {
-    let raw = "Processing...\nERROR: something broke";
-    let cls = classify(raw, Some(5.0));
+    let raw = String::from("Processing...\n") + &esc_pair("[91m", "ERROR: something broke", "[0m");
+    let cls = classify(&raw, Some(5.0));
     assert_eq!(cls.state, ConsoleState::Error);
     assert_eq!(cls.dot_state, AgentState::Unknown);
+    assert_eq!(cls.detail, "red_text");
 }
 
 // ── classify: quiet/breathing ──
@@ -209,7 +251,10 @@ fn classify_error() {
 fn classify_quiet_no_prompt_breathing() {
     let raw = "partial output streaming...\n";
     let cls = classify(raw, Some(10.0));
-    assert!(matches!(cls.state, ConsoleState::Breathing | ConsoleState::WorkingSingle));
+    assert!(matches!(
+        cls.state,
+        ConsoleState::Breathing | ConsoleState::WorkingSingle
+    ));
     assert_eq!(cls.dot_state, AgentState::Working);
 }
 
@@ -225,7 +270,7 @@ fn classify_empty_unknown() {
 
 #[test]
 fn detect_tau_idle() {
-    let raw = format!("{}>>>{}"  , esc("[38;5;14m"), esc("[0m"));
+    let raw = format!("{}>>>{}", esc("[38;5;14m"), esc("[0m"));
     let det = detect_tau(Agent::Tau, &raw, Some(5.0));
     assert_eq!(det.state, AgentState::Idle);
     assert!(!det.skip_state_update);
@@ -243,7 +288,7 @@ fn detect_taurm_idle() {
 
 #[test]
 fn metadata_tokens_present() {
-    let raw = format!("{}>>>{}"  , esc("[38;5;14m"), esc("[0m"));
+    let raw = format!("{}>>>{}", esc("[38;5;14m"), esc("[0m"));
     let cls = classify(&raw, Some(5.0));
     let tokens = metadata_tokens(&cls);
     assert!(tokens.iter().any(|(k, _)| k == "tau-console-state"));
@@ -252,10 +297,38 @@ fn metadata_tokens_present() {
 
 #[test]
 fn metadata_tokens_error() {
-    let cls = classify("ERROR: something broke", Some(2.0));
+    let cls = classify(
+        &esc_pair("[91m", "ERROR: something broke", "[0m"),
+        Some(2.0),
+    );
     let tokens = metadata_tokens(&cls);
     let st = tokens.iter().find(|(k, _)| k == "tau-console-state");
     assert_eq!(st.unwrap().1, "ERROR");
+}
+
+#[test]
+fn classify_error_red_beats_prompt() {
+    let raw = format!(
+        "{}>>>{}\n{}",
+        esc("[38;5;14m"),
+        esc("[0m"),
+        esc_pair("[91m", "ERROR: red visible text", "[0m")
+    );
+    let cls = classify(&raw, Some(5.0));
+    assert_eq!(cls.state, ConsoleState::Error);
+    assert_eq!(cls.dot_state, AgentState::Unknown);
+}
+
+#[test]
+fn classify_plain_error_word_at_prompt_is_idle() {
+    let raw = format!(
+        "state: error was mentioned earlier\n{}>>>{}",
+        esc("[38;5;14m"),
+        esc("[0m")
+    );
+    let cls = classify(&raw, Some(5.0));
+    assert_eq!(cls.state, ConsoleState::Finished);
+    assert_eq!(cls.dot_state, AgentState::Idle);
 }
 
 // ── working dot visible_working ──
@@ -284,7 +357,8 @@ fn explain_tau_working_not_no_live_state_evidence() {
     // Must not fall through to manifest no_live_state_evidence
     assert!(
         cls.detail.contains("colored_content") || cls.detail.contains("plain_content"),
-        "detail should indicate console-state detection, got: {}", cls.detail
+        "detail should indicate console-state detection, got: {}",
+        cls.detail
     );
 }
 
@@ -297,7 +371,10 @@ fn classify_tau_prompt_running_working() {
     assert_eq!(cls.state, ConsoleState::WorkingSingle);
     assert_eq!(cls.dot_state, AgentState::Working);
     assert_eq!(cls.detail, "prompt_status_active");
-    assert!(cls.prompt.is_some(), "prompt token must reflect prompt presence");
+    assert!(
+        cls.prompt.is_some(),
+        "prompt token must reflect prompt presence"
+    );
     assert!(cls.prompt.as_ref().unwrap().contains("[RUNNING]"));
 }
 
@@ -308,7 +385,10 @@ fn classify_rlm_prompt_running_working() {
     assert_eq!(cls.state, ConsoleState::WorkingSingle);
     assert_eq!(cls.dot_state, AgentState::Working);
     assert_eq!(cls.detail, "prompt_status_active");
-    assert!(cls.prompt.is_some(), "prompt token must reflect prompt presence");
+    assert!(
+        cls.prompt.is_some(),
+        "prompt token must reflect prompt presence"
+    );
 }
 
 #[test]
@@ -341,4 +421,3 @@ fn running_indicator_not_false_blocked() {
     assert_ne!(cls.state, ConsoleState::Blocked);
     assert_eq!(cls.dot_state, AgentState::Working);
 }
-
