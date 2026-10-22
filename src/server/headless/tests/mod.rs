@@ -7655,3 +7655,13 @@ fn no_handle_internal_event_bypass_in_module() {
         bypass_lines.join("\n  ")
     );
 }
+
+#[test]
+fn server_quit_signal_names_cover_observed_stop_signals() {
+    assert_eq!(signal_name(1), Some("SIGHUP"));
+    assert_eq!(signal_name(2), Some("SIGINT"));
+    assert_eq!(signal_name(3), Some("SIGQUIT"));
+    assert_eq!(signal_name(15), Some("SIGTERM"));
+    assert_eq!(signal_name(0), None);
+    assert_eq!(signal_name(64), None);
+}

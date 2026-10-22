@@ -462,6 +462,13 @@ fn handle_request(
     }
 
     if matches!(&request.method, Method::ServerStop(_)) {
+        crate::server::headless::note_server_api_stop_requested();
+        tracing::info!(
+            event = "api.server.stop",
+            subsystem = "api",
+            outcome = "requested",
+            "server.stop requested"
+        );
         if let Some(server_stop) = server_stop {
             server_stop.store(true, Ordering::Release);
             return serde_json::to_string(&SuccessResponse {

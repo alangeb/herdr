@@ -344,7 +344,7 @@ pub fn detect_agent_with_osc(
 
 pub fn should_skip_state_update(agent: Option<Agent>, screen_content: &str) -> bool {
     match agent {
-        Some(a) if matches!(a, Agent::Tau | Agent::TauRlm) => false,
+        Some(Agent::Tau | Agent::TauRlm) => false,
         Some(a) => manifest::should_skip_state_update(a, screen_content),
         None => false,
     }

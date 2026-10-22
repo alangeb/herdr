@@ -167,9 +167,7 @@ pub(crate) fn prompt_suffix_is_active_status(prompt_line: &str) -> bool {
 pub(crate) fn detect_blocked(plain_lines: &[&str]) -> Option<String> {
     let scan_start = plain_lines.len().saturating_sub(20);
     let region: String = plain_lines[scan_start..]
-        .iter()
-        .map(|l| *l)
-        .collect::<Vec<_>>()
+        .to_vec()
         .join(" ");
     let lower = region.to_lowercase();
 
@@ -239,10 +237,8 @@ pub(crate) fn visible_red_text(raw_ansi: &str) -> bool {
             continue;
         }
 
-        if red {
-            if byte >= 0x21 && byte != 0x7f {
-                return true;
-            }
+        if red && byte >= 0x21 && byte != 0x7f {
+            return true;
         }
 
         idx += 1;

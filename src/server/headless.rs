@@ -17,8 +17,9 @@
 use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 use std::sync::Arc;
+use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use interprocess::local_socket::traits::Listener as _;
@@ -400,7 +401,7 @@ impl HeadlessServer {
         // Register SIGINT handler for graceful shutdown.
         let should_quit = self.should_quit.clone();
         let quit_notify = self.server_event_tx.clone();
-        ctrlc_handler(should_quit, quit_notify);
+        install_server_observability(should_quit, quit_notify.clone());
         let quit_notify = self.server_event_tx.clone();
         let _host_shutdown = crate::platform::HostShutdownMonitor::start(
             self.host_shutdown_requested.clone(),
@@ -420,6 +421,15 @@ impl HeadlessServer {
 
             // If shutdown has been initiated, complete it and exit.
             if self.shutting_down {
+                let source = server_quit_source_for_log();
+                info!(
+                    event = "server.quit",
+                    subsystem = "server",
+                    outcome = "completed",
+                    source = %source.0,
+                    signal_name = source.1.unwrap_or("none"),
+                    "server shutdown path started"
+                );
                 self.complete_shutdown().await?;
                 break;
             }
@@ -1667,7 +1677,7 @@ impl HeadlessServer {
     }
 
     /// Sends a message to all connected clients.
-    /// Broken 
+    /// Broken
     /// Fan out sampled per-terminal content counters so clients can animate
     /// agent spinners from real output churn for *all* tabs, not just the
     /// focused one. Rate-limited and change-gated to keep the wire cheap.
@@ -1694,9 +1704,7 @@ impl HeadlessServer {
                 .iter()
                 .map(|(id, runtime)| (id.to_string(), runtime.content_seq()))
                 .collect();
-            let changed = live
-                .iter()
-                .any(|(k, v)| cell.1.get(k) != Some(v));
+            let changed = live.iter().any(|(k, v)| cell.1.get(k) != Some(v));
             if !changed {
                 return;
             }
@@ -2741,8 +2749,9 @@ impl HeadlessServer {
                 client.take_deferred_render() != DeferredRender::None
             }
             ServerEvent::QuitSignal => {
-                // The quit check at the top of the loop handles this.
-                // No render needed — the next iteration will initiate shutdown.
+                // The raw signal path can wake the loop without directly setting
+                // should_quit, so record the quit here too.
+                self.should_quit.store(true, Ordering::Release);
                 false
             }
         }
@@ -3532,6 +3541,174 @@ impl Drop for HeadlessServer {
 
 /// Installs a Ctrl+C handler that sets the should_quit flag and wakes up
 /// the event loop by sending a QuitSignal on the server event channel.
+static LAST_SERVER_SIGNAL: AtomicU32 = AtomicU32::new(0);
+static SERVER_API_STOP_REQUESTED: AtomicBool = AtomicBool::new(false);
+#[cfg(unix)]
+static SIGNAL_PIPE_WRITE_FD: AtomicI32 = AtomicI32::new(-1);
+
+pub(crate) fn note_server_api_stop_requested() {
+    SERVER_API_STOP_REQUESTED.store(true, Ordering::Release);
+}
+
+fn server_quit_source_for_log() -> (&'static str, Option<&'static str>) {
+    let signal = LAST_SERVER_SIGNAL.load(Ordering::Relaxed);
+    if signal != 0 {
+        return ("signal", signal_name(signal));
+    }
+    if SERVER_API_STOP_REQUESTED.load(Ordering::Relaxed) {
+        return ("api_stop", None);
+    }
+    ("app", None)
+}
+
+fn signal_name(signal: u32) -> Option<&'static str> {
+    match signal {
+        1 => Some("SIGHUP"),
+        2 => Some("SIGINT"),
+        3 => Some("SIGQUIT"),
+        15 => Some("SIGTERM"),
+        _ => None,
+    }
+}
+
+fn install_server_observability(
+    should_quit: Arc<AtomicBool>,
+    server_event_tx: mpsc::Sender<ServerEvent>,
+) {
+    install_server_panic_hook();
+
+    #[cfg(unix)]
+    {
+        let should_quit = should_quit.clone();
+        let tx = server_event_tx.clone();
+        if let Err(err) = install_logged_unix_quit_handler(tx.clone()) {
+            warn!(err = %err, "failed to install signal pipe; falling back to ctrlc handler");
+            ctrlc_handler(should_quit, tx);
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        ctrlc_handler(should_quit, server_event_tx.clone());
+    }
+}
+
+fn install_server_panic_hook() {
+    use std::sync::Once;
+
+    static HOOK: Once = Once::new();
+    HOOK.call_once(|| {
+        let previous_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            let message = info
+                .payload()
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| info.payload().downcast_ref::<&str>().copied())
+                .unwrap_or("unknown panic");
+            let location = info
+                .location()
+                .map(|location| {
+                    format!(
+                        "{}:{}:{}",
+                        location.file(),
+                        location.line(),
+                        location.column()
+                    )
+                })
+                .unwrap_or_else(|| "unknown".to_string());
+            tracing::error!(
+                event = "server.panic",
+                subsystem = "server",
+                outcome = "failed",
+                location = %location,
+                message = %message,
+                "server panicked"
+            );
+            previous_hook(info);
+        }));
+    });
+}
+
+#[cfg(unix)]
+unsafe extern "C" fn server_signal_handler(
+    signal: libc::c_int,
+    _info: *mut libc::siginfo_t,
+    _context: *mut libc::c_void,
+) {
+    let fd = SIGNAL_PIPE_WRITE_FD.load(Ordering::Relaxed);
+    if fd < 0 {
+        return;
+    }
+    let byte = signal as u8;
+    unsafe {
+        libc::write(
+            fd,
+            std::ptr::from_ref(&byte).cast::<libc::c_void>(),
+            std::mem::size_of::<u8>(),
+        );
+    }
+}
+
+#[cfg(unix)]
+fn install_logged_unix_quit_handler(server_event_tx: mpsc::Sender<ServerEvent>) -> io::Result<()> {
+    let mut fds = [0; 2];
+    if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let (read_fd, write_fd) = (fds[0], fds[1]);
+    SIGNAL_PIPE_WRITE_FD.store(write_fd, Ordering::Relaxed);
+
+    let tx = server_event_tx.clone();
+    thread::Builder::new()
+        .name("herdr-signal-watcher".to_string())
+        .spawn(move || {
+            let mut buffer = [0_u8; 64];
+            loop {
+                let read = unsafe {
+                    libc::read(
+                        read_fd,
+                        std::ptr::from_mut(&mut buffer).cast::<libc::c_void>(),
+                        buffer.len(),
+                    )
+                };
+                if read < 0 {
+                    let err = io::Error::last_os_error();
+                    if err.raw_os_error() == Some(libc::EINTR) {
+                        continue;
+                    }
+                    break;
+                }
+                if read == 0 {
+                    break;
+                }
+                for byte in &buffer[..(read as usize)] {
+                    if *byte == 0 {
+                        continue;
+                    }
+                    LAST_SERVER_SIGNAL.store(u32::from(*byte), Ordering::Relaxed);
+                    let _ = tx.try_send(ServerEvent::QuitSignal);
+                }
+            }
+        })?;
+
+    let mut act: libc::sigaction = unsafe { std::mem::zeroed() };
+    act.sa_sigaction = server_signal_handler as *const () as usize;
+    act.sa_flags = libc::SA_SIGINFO | libc::SA_RESTART;
+    unsafe {
+        libc::sigemptyset(&mut act.sa_mask);
+    }
+
+    for signal in [libc::SIGHUP, libc::SIGINT, libc::SIGQUIT, libc::SIGTERM] {
+        if unsafe { libc::sigaction(signal, &act, std::ptr::null_mut()) } != 0 {
+            SIGNAL_PIPE_WRITE_FD.store(-1, Ordering::Relaxed);
+            return Err(io::Error::last_os_error());
+        }
+    }
+
+    Ok(())
+}
+
 fn ctrlc_handler(should_quit: Arc<AtomicBool>, server_event_tx: mpsc::Sender<ServerEvent>) {
     let _ = ctrlc::set_handler(move || {
         should_quit.store(true, Ordering::Release);
